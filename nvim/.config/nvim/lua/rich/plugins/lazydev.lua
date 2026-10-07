@@ -9,7 +9,7 @@
 -- would have shown it. The file stays only as lua_ls's root marker (lsp.lua's
 -- root_markers): it is what makes this directory the workspace, rather than
 -- whatever holds the next marker further up. checks/repo.sh fails if it sets
--- either key again.
+-- the library again, or declares vim a global again.
 return {
     "folke/lazydev.nvim",
     ft = "lua",

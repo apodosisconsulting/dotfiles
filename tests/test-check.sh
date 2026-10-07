@@ -261,17 +261,24 @@ mutate "a plugin file with no lazy spec is caught" "lazy spec" \
 # The defect this exists for, replayed: a library in .luarc.json replaces the
 # one lazydev sends, and vim.* loses its definitions.
 # shellcheck disable=SC2016  # ${3rd} is lua_ls's placeholder, not the shell's
-mutate "a .luarc.json that sets workspace.library again is caught" "leaves workspace.library and diagnostics.globals to lazydev" \
+mutate "a .luarc.json that sets workspace.library again is caught" "leaves workspace.library to lazydev" \
   sed -i '' 's|"workspace.checkThirdParty": false,|"workspace.library": ["${3rd}/luv/library"], "workspace.checkThirdParty": false,|' nvim/.config/nvim/.luarc.json
 
 # lua_ls reads the nested spelling, with a Lua. prefix, as the same key.
-mutate "the same key spelled as nested objects is caught too" "leaves workspace.library and diagnostics.globals to lazydev" \
+mutate "the same key spelled as nested objects is caught too" "leaves workspace.library to lazydev" \
   sed -i '' 's|"runtime.version": "LuaJIT"|"runtime.version": "LuaJIT", "Lua": {"workspace": {"library": []}}|' nvim/.config/nvim/.luarc.json
 
-mutate "a .luarc.json that silences undefined vim again is caught" "leaves workspace.library and diagnostics.globals to lazydev" \
+# The other half of the same defect: the key that hid it. Its own assertion,
+# because it does its harm another way -- definitions resolve with it set.
+mutate "a .luarc.json that silences undefined vim again is caught" "does not declare vim a global" \
   sed -i '' 's|"workspace.checkThirdParty": false,|"workspace.checkThirdParty": false, "diagnostics.globals": ["vim"],|' nvim/.config/nvim/.luarc.json
 
-mutate "a missing .luarc.json fails rather than reading as one that sets nothing" "leaves workspace.library and diagnostics.globals to lazydev" \
+# Every entry of the list is read, not just the first, in the nested spelling
+# too.
+mutate "vim declared a global second in a nested list is caught too" "does not declare vim a global" \
+  sed -i '' 's|"runtime.version": "LuaJIT"|"runtime.version": "LuaJIT", "Lua": {"diagnostics": {"globals": ["describe", "vim"]}}|' nvim/.config/nvim/.luarc.json
+
+mutate "a missing .luarc.json fails rather than reading as one that sets nothing" "leaves workspace.library to lazydev" \
   rm nvim/.config/nvim/.luarc.json
 
 # The defect this exists for, replayed: 0bdf224 flipped this line inside a
