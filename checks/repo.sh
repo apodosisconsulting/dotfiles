@@ -659,6 +659,57 @@ else
   fi
 fi
 
+section "Git"
+# The global ignore is judged by git itself, not by reading its patterns,
+# because its defect was in how git reads one. A pattern with a slash in the
+# middle is anchored to the repo root, so tmp/99-* caught the 99 plugin's
+# scratch files only from an nvim started at the top of a repo. Started in a
+# subdirectory they were one `git add -A` from a commit, prompt excerpts of the
+# source and all. The nested path below is what proves the **/; the .env
+# templates are what prove the negations still win.
+#
+# A fresh repo in a temp dir, so this repo's own .gitignore cannot answer for
+# it. GIT_DIR and GIT_INDEX_FILE are unset first: the pre-commit hook runs this
+# with both pointing at the real repository, where `git init` would
+# reinitialise it and check-ignore would read its excludes. A subshell, so the
+# trap that removes the temp dir cannot replace one check.sh sets.
+GLOBAL_IGNORE="git/.config/git/ignore"
+ign_out="$(
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_CONFIG_PARAMETERS
+  probe="$(mktemp -d "${TMPDIR:-/tmp}/check-ignore.XXXXXX")" || exit 1
+  trap 'rm -rf "$probe"' EXIT
+  git init -q "$probe" || exit 1
+  ask() { # $1 = what the path should be, $2 = the path
+    git -C "$probe" -c core.excludesFile="$REPO/$GLOBAL_IGNORE" check-ignore --no-index -q "$2"
+    printf '%s %s %s\n' "$1" "$?" "$2"
+  }
+  for p in tmp/99-state sub/dir/tmp/99-prompt-1 .DS_Store .env .venv/bin/python \
+    pkg/__pycache__/m.pyc node_modules/x/i.js; do
+    ask ignored "$p"
+  done
+  for p in .env.example .env.sample .env.template .env.dist; do
+    ask kept "$p"
+  done
+)"
+ign_seen=0
+ign_bad=0
+while read -r want rc p; do
+  [ -n "$p" ] || continue
+  ign_seen=$((ign_seen + 1))
+  case "$want:$rc" in
+    ignored:0 | kept:1) continue ;;
+    ignored:1) bad "the global ignore does not ignore $p, so a repo with no .gitignore of its own commits it" ;;
+    kept:0) bad "the global ignore hides $p, the checked-in template its negations exist to keep" ;;
+    *) bad "git check-ignore could not judge $p (exit $rc), so the global ignore went unchecked" ;;
+  esac
+  ign_bad=$((ign_bad + 1))
+done <<<"$ign_out"
+if [ "$ign_seen" -eq 0 ]; then
+  bad "could not ask git about $GLOBAL_IGNORE at all — the check would be vacuous"
+elif [ "$ign_bad" -eq 0 ]; then
+  ok "the global ignore covers what it claims at any depth and keeps the .env templates ($ign_seen paths, judged by git)"
+fi
+
 section "Make targets"
 # A target listed in .PHONY but with no recipe does not error — make prints
 # "Nothing to be done" and exits 0. `make test` did exactly that after a careless

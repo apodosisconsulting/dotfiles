@@ -355,6 +355,18 @@ mutate "a later override setting YAML back to 4 is caught" "prettier indents YAM
 mutate "an unreadable home/.prettierrc fails rather than passing vacuously" "prettier indents YAML by 2" \
   bash -c 'printf "not json\n" >> home/.prettierrc'
 
+# The defect this exists for: the 99 pattern anchored to the repo root again,
+# so nvim started in a subdirectory leaks its scratch files.
+mutate "a root-anchored 99 pattern in the global ignore is caught" "the global ignore covers what it claims" \
+  sed -i '' 's|^\*\*/tmp/99-\*$|tmp/99-*|' git/.config/git/ignore
+
+mutate "a build directory the global ignore no longer covers is caught" "the global ignore covers what it claims" \
+  sed -i '' '/^node_modules\/$/d' git/.config/git/ignore
+
+# The other direction: .env.* hides the template once its negation is gone.
+mutate "a .env template the global ignore hides is caught" "the global ignore covers what it claims" \
+  sed -i '' '/^!\.env\.example$/d' git/.config/git/ignore
+
 mutate_machine "a missing git hook is caught" "hooks installed" \
   rm -f .githooks/pre-commit
 
