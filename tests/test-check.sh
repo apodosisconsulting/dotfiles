@@ -360,6 +360,15 @@ mutate_machine "any other key that disagrees with what git uses is caught" "keys
 mutate_machine "a git config with no keys fails rather than passing vacuously" "keys the repo's git config sets" \
   bash -c ': >git/.config/git/config'
 
+# The defect this exists for, replayed: a guard.log the guard wrote into the
+# repo, committed. -f because .gitignore now refuses it, which is the point.
+mutate "a tracked guard.log is caught" "no runtime file the guard or the 99 plugin writes" \
+  sh -c 'echo x >guard.log && git add -f guard.log'
+
+# The 99 plugin's state, anywhere in the tree.
+mutate "a tracked 99 scratch file is caught" "no runtime file the guard or the 99 plugin writes" \
+  sh -c 'mkdir -p tmp && echo x >tmp/99-state && git add -f tmp/99-state'
+
 # ------------------------------------------------------ what the linters can see
 
 mutate "a shell script with no shebang is caught, because lint would skip it" "declare an interpreter" \

@@ -1028,6 +1028,28 @@ fi
 
 [ "$readme_bad" -eq 0 ] && ok "the README describes nothing that is not here (targets, paths, packages, bindings, figures)"
 
+section "What is tracked"
+# Files a program here WRITES at runtime have no business in the history. A
+# guard.log went in with a commit about check.sh: the resurrect guard writes its
+# log, its hold state and its pane-archive stash beside whatever save it is
+# handed, so running it by hand on a relative path drops them in the cwd and
+# `git add -A` does the rest. The 99 plugin's tmp_dir is relative to the cwd
+# too, and its prompt files hold excerpts of whatever was being edited.
+# .gitignore keeps them out; this is what notices one that gets past it, by
+# `git add -f` or by a rule that stops matching. By basename, at any depth.
+tracked_n="$(git ls-files | grep -c .)"
+runtime_tracked="$(git ls-files | awk -F/ '
+  $NF == "guard.log" || $NF == ".guard-state" || $NF == ".guard-pane-contents.tar.gz" || $NF ~ /^99-/ { print }
+')"
+if [ "${tracked_n:-0}" -eq 0 ]; then
+  bad "git ls-files listed nothing — the scan for tracked runtime files would be vacuous"
+elif [ -n "$runtime_tracked" ]; then
+  bad "runtime files are tracked — the guard or the 99 plugin wrote them, and nothing here reads them:"
+  printf '%s\n' "$runtime_tracked" | sed 's/^/      /'
+else
+  ok "no runtime file the guard or the 99 plugin writes is tracked"
+fi
+
 section "Lint coverage"
 # `make lint` derives its file set from the shebangs, so a script only reaches
 # the linters by starting with one. A shell script without a shebang would be
