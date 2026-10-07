@@ -325,10 +325,11 @@ fi
 #
 # The second half is the one that would rot silently. C-S-r and C-r are the same
 # byte in a traditional terminal; they are only distinct when tmux asks for
-# CSI-u reporting (extended-keys) AND believes the terminal can do it (the
-# extkeys terminal-feature). Drop either and the binding still READS correct
-# while becoming unreachable — the config would claim a key that cannot be
-# pressed. So any Shift-bearing restore key requires both.
+# extended key reporting -- xterm's modifyOtherKeys, here (extended-keys) -- AND
+# believes the terminal can do it (the extkeys terminal-feature). Drop either
+# and the binding still READS correct while becoming unreachable — the config
+# would claim a key that cannot be pressed. So any Shift-bearing restore key
+# requires both.
 restore_key="$(tmux_setting '@resurrect-restore')"
 ext_on="$(grep -cE '^[[:space:]]*set -s[g]? extended-keys on' "$TMUXCONF")"
 ext_feat="$(grep -cE '^[[:space:]]*set -sa terminal-features .*extkeys' "$TMUXCONF")"
