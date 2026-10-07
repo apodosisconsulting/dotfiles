@@ -439,6 +439,54 @@ for mode in n v; do
 done
 
 echo
+echo "== every command a lazy stub names exists once its plugin loads =="
+# A lazy `cmd` entry is a stub: lazy defines the name, and the first use
+# deletes the stub, loads the plugin and runs the command again, expecting the
+# plugin to have defined the real one by then. If it has not, the name still
+# completes on the command line and fails only when it is used. Both ways that
+# happened here: trouble was never set up, so :Trouble never existed and
+# <leader>tt was E492; and fugitive's list named :Gblame and :Glog, which
+# fugitive no longer defines.
+#
+# Read from lazy rather than listed here, so a plugin that gains a cmd entry is
+# covered without anyone remembering this section exists. Proven by hand both
+# ways: deleting trouble's `opts = {}` fails the :Trouble line, and putting
+# "Gblame" back in fugitive's list fails that one.
+cat >"$SANDBOX/cmd_probe.lua" <<'LUA'
+local Plugin = require("lazy.core.plugin")
+local found = {}
+for name, plugin in pairs(require("lazy.core.config").plugins) do
+  local cmds = Plugin.values(plugin, "cmd", true)
+  if #cmds > 0 then
+    require("lazy").load({ plugins = { name } })
+    for _, c in ipairs(cmds) do
+      found[#found + 1] = string.format("%s:%s:%d", name, c, vim.fn.exists(":" .. c))
+    end
+  end
+end
+table.sort(found)
+print("LAZYCMDS=" .. table.concat(found, ","))
+LUA
+out="$(nv "$SANDBOX/start.lua" "luafile $SANDBOX/cmd_probe.lua")"
+lazy_cmds="$(printf '%s' "$out" | tr -d '\r' | grep -o 'LAZYCMDS=[^[:space:]]*' | head -1 | sed 's/^LAZYCMDS=//')"
+# The vacuity guard: an empty list would pass every assertion in the loop by
+# running none of them.
+if [ -z "$lazy_cmds" ]; then
+  no "could not read a single lazy cmd stub out of nvim — this section would assert nothing"
+  printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+else
+  printf '    %s command(s) named by lazy cmd stubs\n' "$(printf '%s' "$lazy_cmds" | tr ',' '\n' | grep -c .)"
+  for entry in $(printf '%s' "$lazy_cmds" | tr ',' ' '); do
+    cmd_plugin="${entry%%:*}"
+    cmd_rest="${entry#*:}"
+    cmd_exists="${cmd_rest##*:}"
+    # exists() is 2 for a user command that matches in full. :-0 is the
+    # failing side: a figure that could not be read must not pass.
+    assert ":${cmd_rest%%:*} exists once $cmd_plugin has loaded" [ "${cmd_exists:-0}" = 2 ]
+  done
+fi
+
+echo
 echo "== one clipboard: yank, paste and delete all go through the system's =="
 # What options.lua and keymaps.lua claim, checked by doing it: yy has to land
 # on pbcopy, p has to read pbpaste, and the two void-register maps have to
