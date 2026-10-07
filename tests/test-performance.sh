@@ -10,7 +10,6 @@
 #
 #   compinit -C (cached, current)   72ms
 #   always full compinit            80ms
-#   no compinit at all              59ms
 #
 # So the fix is worth ~8ms per shell. The 210ms figure that justified this suite
 # came from a profiling run where ZDOTDIR was redirected, which changed fpath and
@@ -64,11 +63,12 @@ report() { # $1 = label, $2 = median, $3 = min, $4 = max, $5 = threshold
 }
 
 echo "== zsh interactive startup =="
-# Threshold reasoning, not taste: the steady-state median here is ~70ms with a
-# tight spread (stdev ~5ms), and the floor with no compinit at all is 59ms, so
-# there is little room to improve. 250ms is roughly 3.5x the median: loose
-# enough that a loaded CI runner will not flake, tight enough that anything
-# making startup several times dearer trips it.
+# Threshold reasoning, not taste: 250ms is several times the median printed
+# below, loose enough that a loaded CI runner will not flake and tight enough
+# that anything making startup several times dearer trips it. No median or
+# floor is written here: this comment used to quote both and say there was
+# little room to improve, and the next change to .zshrc started shells below
+# that floor. The line printed on every run is the one to read.
 ZSH_THRESHOLD_MS=250
 if command -v zsh >/dev/null 2>&1; then
   read -r med lo hi <<<"$(measure zsh -i -c exit)"

@@ -325,6 +325,12 @@ mutate "(#q...) without extendedglob is caught" "extendedglob" \
 mutate "a broken .zshrc is caught" ".zshrc parses" \
   bash -c 'printf "\nif then fi done\n" >> zsh/.zshrc'
 
+# The defect this exists for: the per-shell eval coming back, and with it the
+# empty output that left HOMEBREW_PREFIX unset.
+# shellcheck disable=SC2016  # the $( ) is text appended to .zshrc, not run here
+mutate "brew shellenv run from .zshrc again is caught" "rather than running brew shellenv" \
+  bash -c 'printf "\neval \"\$(/opt/homebrew/bin/brew shellenv)\"\n" >> zsh/.zshrc'
+
 # The injected line is assembled from a format string rather than written
 # literally: spelled out, it is itself the hazard, and check.sh would flag this
 # file for containing its own test data.

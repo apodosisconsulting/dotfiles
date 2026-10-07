@@ -1,18 +1,54 @@
 # ~/.zshrc (interactive shells)
 [[ $- != *i* ]] && return
 
-# Keep $PATH free of duplicates. Without this, re-sourcing .zshrc or starting a
-# shell inside a shell stacks another copy of every entry below, because they all
-# prepend unconditionally. `path` is tied to PATH, so marking it -U covers both.
-typeset -U path PATH
+# Keep $PATH and $fpath free of duplicates. Without this, re-sourcing .zshrc or
+# starting a shell inside a shell stacks another copy of every entry below,
+# because they all prepend unconditionally. `path` is tied to PATH and `fpath`
+# to FPATH, so marking each pair -U covers both spellings.
+typeset -U path PATH fpath FPATH
 
 # -------------------------
 # Homebrew — must be early for PATH
 # -------------------------
+# What `brew shellenv` prints, written out rather than run. Running it cost a
+# bash process on every shell, and a path_helper on top whenever it printed
+# anything. And it prints NOTHING when PATH already starts with brew's bin and
+# sbin, so a shell handed such a PATH without HOMEBREW_PREFIX (env -i, or any
+# launcher that sets PATH itself) never got the prefix and silently skipped
+# both plugins below. tests/test-zshrc.sh compares this block with `brew
+# shellenv zsh` itself, so a Homebrew release that changes what it sets fails a
+# test instead of drifting.
+#
+# Unlike brew's output, it is safe to run twice. A shell started from a shell
+# has ~/.local/bin ahead of brew's bin, so the early return never fired there,
+# and every nested shell gained another copy of brew's fpath and INFOPATH
+# entries. typeset -U above now covers fpath, MANPATH is rebuilt rather than
+# prepended to, and INFOPATH gains the entry only when it is missing.
 if [[ -x /opt/homebrew/bin/brew ]]; then
-  eval "$(/opt/homebrew/bin/brew shellenv)"
+  export HOMEBREW_PREFIX=/opt/homebrew
+  export HOMEBREW_REPOSITORY=$HOMEBREW_PREFIX
 elif [[ -x /usr/local/bin/brew ]]; then
-  eval "$(/usr/local/bin/brew shellenv)"
+  export HOMEBREW_PREFIX=/usr/local
+  # Through the variable: checks/machine.sh requires every literal Homebrew
+  # path to exist under one prefix or the other, and this one has no twin
+  # under /opt/homebrew, so on Apple Silicon it would be reported missing.
+  export HOMEBREW_REPOSITORY=$HOMEBREW_PREFIX/Homebrew
+fi
+if [[ -n ${HOMEBREW_PREFIX-} ]]; then
+  export HOMEBREW_CELLAR=$HOMEBREW_PREFIX/Cellar
+  path=($HOMEBREW_PREFIX/bin $HOMEBREW_PREFIX/sbin $path)
+  fpath[1,0]=$HOMEBREW_PREFIX/share/zsh/site-functions
+  export FPATH
+  # brew leaves a set MANPATH with a leading colon and path_helper with a
+  # trailing one and no repeats. The empty first and last elements are those
+  # two colons.
+  if [[ -n $MANPATH ]]; then
+    manpath=('' ${(u)manpath} '')
+    export MANPATH
+  fi
+  if [[ :${INFOPATH-}: != *:$HOMEBREW_PREFIX/share/info:* ]]; then
+    export INFOPATH=$HOMEBREW_PREFIX/share/info:${INFOPATH-}
+  fi
 fi
 
 # Local scripts

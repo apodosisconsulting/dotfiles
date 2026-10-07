@@ -556,6 +556,21 @@ if grep -q '(#q' zsh/.zshrc; then
   fi
 fi
 
+# .zshrc writes out what `brew shellenv` prints rather than running it. Running
+# it cost a bash process on every shell, and it prints nothing at all when PATH
+# already starts with brew's bin and sbin, so a shell handed such a PATH never
+# got HOMEBREW_PREFIX and loaded neither plugin. tests/test-zshrc.sh proves the
+# block sets what brew would; this catches the eval coming back. Comment lines
+# are dropped, because the block's own comment names what it replaced.
+zshrc_code="$(grep -vE '^[[:space:]]*#' zsh/.zshrc 2>/dev/null)"
+if [ -z "$zshrc_code" ]; then
+  bad "could not read any code out of zsh/.zshrc — the shellenv check would be vacuous"
+elif grep -qE 'shellenv' <<<"$zshrc_code"; then
+  bad ".zshrc runs brew shellenv — a bash process on every shell, and no HOMEBREW_PREFIX at all when PATH already starts with brew's bin"
+else
+  ok ".zshrc sets Homebrew's environment itself rather than running brew shellenv on every shell"
+fi
+
 section "Known shell traps"
 # A pipeline ending in a quiet grep, under `set -o pipefail`: grep exits on the
 # first match, the producer takes SIGPIPE, and the pipeline reports FAILURE even

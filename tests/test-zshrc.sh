@@ -18,7 +18,7 @@ assert ".zshrc parses" zsh -n "$ZSHRC"
 echo
 echo "== the compinit cache branch is reachable =="
 # Extracted rather than sourced: sourcing the real .zshrc would pull in nvm,
-# brew shellenv, plugins and completion dumps, and would write to the caller's
+# Homebrew, plugins and completion dumps, and would write to the caller's
 # $HOME. What matters is which branch the guard takes, so run just that.
 probe() { # $1 = probe file to test against
   PROBE="$1" zsh -f -c '
@@ -83,6 +83,98 @@ assert "path and PATH are declared -U" \
   grep -qE '^[[:space:]]*typeset -U path PATH' "$ZSHRC"
 dupes="$(zsh -f -c 'typeset -U path PATH; path=(/a /b /a /b /c); print -r -- $#path')"
 assert "which really does collapse duplicates" [ "${dupes:-0}" -eq 3 ]
+
+echo
+echo "== the Homebrew block sets exactly what brew shellenv would =="
+# .zshrc writes out what `brew shellenv` prints instead of running it, so brew's
+# own output is the specification. Compared, not trusted: each side runs in a
+# clean zsh after the file's own typeset -U line, and the comparison is of
+# `typeset -p`, so export flags and types count as well as values.
+brew_bin=""
+for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+  if [ -x "$b" ]; then
+    brew_bin="$b"
+    break
+  fi
+done
+if [ -z "$brew_bin" ]; then
+  printf '  \033[33mSKIP\033[0m  %s\n' "no Homebrew here, so there is no brew shellenv to compare the block with"
+else
+  prefix="${brew_bin%/bin/brew}"
+  BLOCK="$TEST_TMP/brew-block.zsh"
+  sed -n '/^# Homebrew/,/^# Local scripts/p' "$ZSHRC" >"$BLOCK"
+  preamble="$(grep -m1 -E '^[[:space:]]*typeset -U path' "$ZSHRC")"
+  assert "the file's typeset -U line can be read, to run before each side" \
+    contains "$preamble" "typeset -U path PATH"
+  dump='typeset -p PATH FPATH MANPATH INFOPATH HOMEBREW_PREFIX HOMEBREW_CELLAR HOMEBREW_REPOSITORY 2>&1'
+  clean="PATH=/usr/bin:/bin:/usr/sbin:/sbin"
+  brew_env() { # $1 = a block to source, or "brew"; $2... = the environment
+    local what="$1" run
+    shift
+    if [ "$what" = brew ]; then
+      run="eval \"\$($brew_bin shellenv zsh)\""
+    else
+      run="source $what"
+    fi
+    env -i HOME="$TEST_TMP" "$@" zsh -f -c "${preamble:-false}; $run; $dump"
+  }
+
+  # The vacuity guards. A block that is empty, or that still runs brew, would
+  # agree with brew trivially. Comment lines are dropped first, because the
+  # block's comment explains what it replaced.
+  code="$(grep -vE '^[[:space:]]*#' "$BLOCK")"
+  assert "the block can be read out of .zshrc, and sets HOMEBREW_PREFIX" \
+    contains "$code" "HOMEBREW_PREFIX="
+  refute "...and does not run brew shellenv itself, which would compare it with itself" \
+    contains "$code" "shellenv"
+
+  for extra in "" "MANPATH=/a:/b" "MANPATH=/a:/b INFOPATH=/i FPATH=/f"; do
+    # shellcheck disable=SC2086  # split on purpose: one env assignment per word
+    ours="$(brew_env "$BLOCK" $clean $extra)"
+    # shellcheck disable=SC2086
+    theirs="$(brew_env brew $clean $extra)"
+    assert "with ${extra:-nothing else} set, the block leaves the same environment as brew shellenv" \
+      [ "$ours" = "$theirs" ]
+  done
+  assert "...and that environment has brew's prefix in it, so the comparison was not of two failures" \
+    contains "$ours" "HOMEBREW_PREFIX=$prefix"
+
+  # Inline negative control: the comparison above can fail.
+  sed "s| \$HOMEBREW_PREFIX/sbin||" "$BLOCK" >"$TEST_TMP/brew-block-nosbin.zsh"
+  refute "a copy of the block without brew's sbin really is different" \
+    cmp -s "$BLOCK" "$TEST_TMP/brew-block-nosbin.zsh"
+  ours="$(brew_env "$TEST_TMP/brew-block-nosbin.zsh" "$clean")"
+  theirs="$(brew_env brew "$clean")"
+  refute "...and that copy fails the comparison" [ "$ours" = "$theirs" ]
+
+  # The bug the block fixes. brew returns early when PATH already starts with
+  # its bin and sbin, printing nothing, so HOMEBREW_PREFIX was never set and
+  # both plugins were skipped without a word.
+  first="PATH=$prefix/bin:$prefix/sbin:/usr/bin:/bin"
+  printed="$(env -i HOME="$TEST_TMP" "$first" "$brew_bin" shellenv zsh)"
+  rc=$?
+  assert "brew shellenv prints nothing when PATH already starts with its bin and sbin" \
+    [ "$rc:$printed" = "0:" ]
+  got="$(env -i HOME="$TEST_TMP" "$first" zsh -f -c "$preamble; source $BLOCK; print -r -- \${HOMEBREW_PREFIX-unset}")"
+  assert "...where the block still sets HOMEBREW_PREFIX, so the plugins load" \
+    [ "$got" = "$prefix" ]
+
+  # A nested shell inherits everything the block exported and runs it again.
+  # brew's output did not survive that: .zshrc puts ~/.local/bin ahead of
+  # brew's bin, so its early return never fired in a nested shell, and each one
+  # added another copy of its fpath and INFOPATH entries. The block must not.
+  nested() { # $1 = the typeset -U line to run first
+    env -i HOME="$TEST_TMP" "$clean" MANPATH=/a:/b zsh -f -c \
+      "$1; source $BLOCK; zsh -f -c '$1; source $BLOCK; $dump'"
+  }
+  once="$(env -i HOME="$TEST_TMP" "$clean" MANPATH=/a:/b zsh -f -c "$preamble; source $BLOCK; $dump")"
+  assert "a shell nested in one that ran the block ends up with the same environment" \
+    [ "$once" = "$(nested "$preamble")" ]
+  # And the negative control for that: without fpath in the typeset -U line,
+  # the nested shell gains a second copy of brew's site-functions.
+  refute "...which it does not without fpath in the typeset -U line" \
+    [ "$once" = "$(nested "typeset -U path PATH")" ]
+fi
 
 echo
 echo "== a missing ~/.zshrc.local must not poison \$? =="
