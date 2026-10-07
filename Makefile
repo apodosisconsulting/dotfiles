@@ -18,7 +18,7 @@ help:
 	@echo "  make doctor     - print useful debug info (PATH, tool locations)"
 	@echo "  make test       - run the test suites in tests/"
 	@echo "  make test-fast  - skip the suites that drive a terminal (seconds, not minutes)"
-	@echo "  make lint       - shellcheck and shfmt every shell script here"
+	@echo "  make lint       - shellcheck and shfmt every shell script, stylua every lua file"
 	@echo "  make hooks      - install the git hooks (check on commit, test-fast on push)"
 	@echo "  make tidy       - report cruft that has accumulated (deletes nothing)"
 	@echo "  make tidy-apply - actually clean up what 'tidy' reported"
@@ -66,6 +66,13 @@ test-fast:
 #
 # Deliberately not part of `check`: shellcheck and shfmt are developer tools and
 # check.sh has to run on a machine without them. CI runs this as its own step.
+#
+# stylua over every tracked lua file, for the same reason. Format-on-save runs
+# stylua already, so a file nobody had saved since a style change sat
+# unformatted until the next unrelated edit rewrote it, burying that edit's real
+# diff. --config-path is explicit because bare stylua does not search parent
+# directories for its config and CI has no ~/.stylua.toml: without the flag it
+# falls back to tabs and reports nearly every file here.
 lint:
 	@set -euo pipefail; \
 	files="$$(git ls-files -z | xargs -0 awk 'FNR == 1 && /^#!.*(ba)?sh$$/ { print FILENAME }')"; \
@@ -74,6 +81,8 @@ lint:
 	shellcheck -x -P tests $$files; \
 	echo "==> shfmt"; \
 	shfmt -i 2 -ci -d $$files; \
+	echo "==> stylua"; \
+	git ls-files -z '*.lua' | xargs -0 stylua --check --config-path home/.stylua.toml; \
 	echo "==> clean"
 
 # Local to this repo, not global: core.hooksPath in the stowed git config would

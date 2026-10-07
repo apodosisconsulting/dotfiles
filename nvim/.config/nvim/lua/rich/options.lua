@@ -5,9 +5,9 @@ vim.opt.termguicolors = true
 vim.opt.background = "dark"
 vim.opt.number = true
 vim.opt.relativenumber = true
-vim.opt.signcolumn = "yes"          -- always show, avoids layout shift from diagnostics/gitsigns
+vim.opt.signcolumn = "yes" -- always show, avoids layout shift from diagnostics/gitsigns
 vim.opt.cursorline = true
-vim.opt.guicursor = ""              -- block cursor in all modes
+vim.opt.guicursor = "" -- block cursor in all modes
 vim.opt.colorcolumn = "80"
 
 -- Indentation (4 spaces, no tabs)

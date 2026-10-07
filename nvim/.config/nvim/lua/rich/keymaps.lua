@@ -24,7 +24,12 @@ vim.keymap.set("n", "n", "nzzzv", { silent = true, desc = "Next search + center"
 vim.keymap.set("n", "N", "Nzzzv", { silent = true, desc = "Prev search + center" })
 
 -- Clear search highlights (hlsearch is on; Esc dismisses them)
-vim.keymap.set("n", "<Esc>", "<cmd>nohlsearch<cr>", { silent = true, desc = "Clear search highlights" })
+vim.keymap.set(
+    "n",
+    "<Esc>",
+    "<cmd>nohlsearch<cr>",
+    { silent = true, desc = "Clear search highlights" }
+)
 
 -- Clipboard: there is one, the system's. options.lua sets clipboard=unnamedplus,
 -- so a plain y and p already go through pbcopy and pbpaste: what you yank here
@@ -54,7 +59,12 @@ vim.keymap.set("n", "<Esc>", "<cmd>nohlsearch<cr>", { silent = true, desc = "Cle
 vim.keymap.set("x", "<leader>p", "P", { silent = true, desc = "Paste without register loss" })
 vim.keymap.set({ "n", "v" }, "<leader>y", [["+y]], { silent = true, desc = "Yank to clipboard" })
 vim.keymap.set("n", "<leader>Y", [["+Y]], { silent = true, desc = "Yank line to clipboard" })
-vim.keymap.set({ "n", "v" }, "<leader>d", [["_d]], { silent = true, desc = "Delete to void register" })
+vim.keymap.set(
+    { "n", "v" },
+    "<leader>d",
+    [["_d]],
+    { silent = true, desc = "Delete to void register" }
+)
 
 -- Quickfix list navigation
 vim.keymap.set("n", "]q", "<cmd>cnext<cr>zz", { silent = true, desc = "Next quickfix item" })
@@ -64,8 +74,17 @@ vim.keymap.set("n", "[q", "<cmd>cprev<cr>zz", { silent = true, desc = "Prev quic
 vim.keymap.set("n", "Q", "<nop>")
 
 -- Quick search-replace for the word under cursor across the whole file
-vim.keymap.set("n", "<leader>s", [[:%s/\<<C-r><C-w>\>/<C-r><C-w>/gI<Left><Left><Left>]],
-    { desc = "Replace word under cursor" })
+vim.keymap.set(
+    "n",
+    "<leader>s",
+    [[:%s/\<<C-r><C-w>\>/<C-r><C-w>/gI<Left><Left><Left>]],
+    { desc = "Replace word under cursor" }
+)
 
 -- Make current file executable without leaving the editor
-vim.keymap.set("n", "<leader>x", "<cmd>!chmod +x %<CR>", { silent = true, desc = "chmod +x current file" })
+vim.keymap.set(
+    "n",
+    "<leader>x",
+    "<cmd>!chmod +x %<CR>",
+    { silent = true, desc = "chmod +x current file" }
+)

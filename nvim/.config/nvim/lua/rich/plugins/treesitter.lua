@@ -20,9 +20,24 @@ return {
 
             configs.setup({
                 ensure_installed = {
-                    "lua", "vim", "vimdoc", "bash", "markdown", "markdown_inline",
-                    "html", "css", "json", "yaml", "toml", "query",
-                    "javascript", "typescript", "python", "rust", "c", "go",
+                    "lua",
+                    "vim",
+                    "vimdoc",
+                    "bash",
+                    "markdown",
+                    "markdown_inline",
+                    "html",
+                    "css",
+                    "json",
+                    "yaml",
+                    "toml",
+                    "query",
+                    "javascript",
+                    "typescript",
+                    "python",
+                    "rust",
+                    "c",
+                    "go",
                 },
                 highlight = { enable = true },
                 indent = { enable = true },
@@ -64,10 +79,16 @@ return {
                     swap = {
                         enable = true,
                         swap_next = {
-                            ["<leader>a"] = { query = "@parameter.inner", desc = "Swap with next argument" },
+                            ["<leader>a"] = {
+                                query = "@parameter.inner",
+                                desc = "Swap with next argument",
+                            },
                         },
                         swap_previous = {
-                            ["<leader>A"] = { query = "@parameter.inner", desc = "Swap with prev argument" },
+                            ["<leader>A"] = {
+                                query = "@parameter.inner",
+                                desc = "Swap with prev argument",
+                            },
                         },
                     },
                 },

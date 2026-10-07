@@ -12,12 +12,16 @@ return {
         local group = vim.api.nvim_create_augroup("rich-lualine-recording", { clear = true })
         vim.api.nvim_create_autocmd("RecordingEnter", {
             group = group,
-            callback = function() require("lualine").refresh() end,
+            callback = function()
+                require("lualine").refresh()
+            end,
         })
         vim.api.nvim_create_autocmd("RecordingLeave", {
             group = group,
             callback = function()
-                vim.defer_fn(function() require("lualine").refresh() end, 50)
+                vim.defer_fn(function()
+                    require("lualine").refresh()
+                end, 50)
             end,
         })
 

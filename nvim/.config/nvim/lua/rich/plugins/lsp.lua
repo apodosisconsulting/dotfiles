@@ -17,8 +17,20 @@ return {
 
     keys = {
         { "<leader>ld", vim.diagnostic.open_float, desc = "Line diagnostics" },
-        { "[d", function() vim.diagnostic.jump({ count = -1, float = true }) end, desc = "Prev diagnostic" },
-        { "]d", function() vim.diagnostic.jump({ count = 1, float = true }) end, desc = "Next diagnostic" },
+        {
+            "[d",
+            function()
+                vim.diagnostic.jump({ count = -1, float = true })
+            end,
+            desc = "Prev diagnostic",
+        },
+        {
+            "]d",
+            function()
+                vim.diagnostic.jump({ count = 1, float = true })
+            end,
+            desc = "Next diagnostic",
+        },
 
         { "<leader>rn", vim.lsp.buf.rename, desc = "Rename symbol" },
         { "<leader>ca", vim.lsp.buf.code_action, desc = "Code action", mode = { "n", "v" } },
@@ -58,7 +70,14 @@ return {
         -- so we only need root markers and checkThirdParty here
         vim.lsp.config.lua_ls = {
             capabilities = capabilities,
-            root_markers = { ".luarc.json", ".luarc.jsonc", ".luacheckrc", ".stylua.toml", "stylua.toml", ".git" },
+            root_markers = {
+                ".luarc.json",
+                ".luarc.jsonc",
+                ".luacheckrc",
+                ".stylua.toml",
+                "stylua.toml",
+                ".git",
+            },
             settings = {
                 Lua = {
                     workspace = { checkThirdParty = false },
