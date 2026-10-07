@@ -265,6 +265,60 @@ else
 fi
 
 echo
+echo "== pyright resolves what a folder of loose scripts imports =="
+# lsp.lua gives pyright two things lspconfig does not: the file's own folder as
+# its root where no project marker is found, and the folder's .venv when no venv
+# is activated. tests/helpers/pyright-probe.lua builds a folder for each claim
+# and prints KEY=value lines; see it for how each one is made non-vacuous.
+#
+# The sibling question is asked about a module created AFTER the file importing
+# it is open. One that already exists is not the test: pyright resolves that
+# even with no root -- measured -- so it would pass with the fix removed. What
+# fails without a root is everything that changes on disk afterwards, because
+# Neovim runs none of a server's file watchers for a client with no workspace
+# folder.
+#
+# Not nv(): the probe opens its own files and quits nvim itself. TMPDIR puts its
+# folders under this suite's scratch dir, and the cd it does keeps anything a
+# plugin writes into the cwd on exit in there too.
+if [ -x "$HOME/.local/share/nvim/mason/bin/pyright-langserver" ]; then
+  out="$(TMPDIR="$TEST_TMP" PATH="$CLIP_BIN:$PATH" XDG_STATE_HOME="$STATE" \
+    nvim --headless -c "luafile $REPO_ROOT/tests/helpers/pyright-probe.lua" 2>&1)"
+  # Only an explicit =false is a skip. A probe that died before printing it is
+  # not "a marker sits above"; it falls through, fails its assertions, and the
+  # check after them says what nvim printed.
+  if contains "$out" "PYRIGHT_NO_MARKER_ABOVE=false"; then
+    printf '  \033[33mSKIP\033[0m  a pyright root marker sits above %s, so the no-marker case cannot be set up\n' "$TEST_TMP"
+  else
+    assert "pyright attaches to a file in a folder with no root marker" contains "$out" "PYRIGHT_ATTACHED=true"
+    assert "the file's own folder becomes pyright's root" contains "$out" "PYRIGHT_ROOT_IS_FILE_DIR=true"
+    assert "it flags the import while the module does not exist yet (guards a vacuous pass)" \
+      contains "$out" "PYRIGHT_FLAGS_MISSING_BEFORE=true"
+    assert "the import resolves once the module appears on disk" contains "$out" "PYRIGHT_RESOLVES_AFTER_CREATE=true"
+    assert "and module. then completes the function it defines" contains "$out" "PYRIGHT_COMPLETES_NEW_SIBLING=true"
+    assert "a .py directly in HOME still gets pyright" contains "$out" "PYRIGHT_HOME_ATTACHED=true"
+    assert "...but no root, so pyright does not index the whole home directory" \
+      contains "$out" "PYRIGHT_HOME_STAYS_SINGLE_FILE=true"
+    if contains "$out" "PYRIGHT_VENV=SKIP"; then
+      printf '  \033[33mSKIP\033[0m  no python3 to build a venv with\n'
+    else
+      assert "pyright attaches in a folder with a .venv" contains "$out" "PYRIGHT_VENV=true"
+      assert "with no venv activated, it is pointed at the folder's .venv" \
+        contains "$out" "PYRIGHT_VENV_INTERPRETER=true"
+      assert "a package only that .venv has completes" contains "$out" "PYRIGHT_VENV_COMPLETES=true"
+      assert "...and is not reported missing" contains "$out" "PYRIGHT_VENV_RESOLVES=true"
+    fi
+  fi
+  # The tokens vanish as a set when the probe dies; say what nvim said instead.
+  if ! contains "$out" "PYRIGHT_PROBE_DONE=true"; then
+    no "the pyright probe did not run to the end"
+    printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300)"
+  fi
+else
+  printf '  \033[33mSKIP\033[0m  pyright is not installed via mason\n'
+fi
+
+echo
 echo "== format-on-save actually reformats =="
 # conform is configured per filetype. A formatter named for a filetype whose
 # binary is missing makes format-on-save a silent no-op for that filetype, which

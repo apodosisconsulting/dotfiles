@@ -66,7 +66,74 @@ return {
             },
         }
 
-        vim.lsp.config.pyright = { capabilities = capabilities }
+        -- pyright needs two things lspconfig does not give it: a root in a folder
+        -- with no project marker, and the project's venv when none is activated.
+        -- tests/test-nvim.sh exercises both against a running pyright.
+        vim.lsp.config.pyright = {
+            capabilities = capabilities,
+
+            -- lspconfig roots pyright at the nearest pyrightconfig.json,
+            -- pyproject.toml, setup.py, setup.cfg, requirements.txt, Pipfile or
+            -- .git. A folder of loose scripts has none, so pyright ran with no
+            -- root and no workspace folder -- and Neovim runs none of a server's
+            -- file watchers for a client without one. pyright still resolved
+            -- `import stats` from main.py's own folder, which is why this looked
+            -- intermittent, but it was never told about a stats.py created after
+            -- it started, or changed outside this nvim: the import stayed "could
+            -- not be resolved", and `stats.` completed nothing new, until nvim
+            -- restarted. The file's own folder is the fallback root.
+            root_dir = function(bufnr, on_dir)
+                -- Read off the merged config rather than copied here, so the
+                -- list stays lspconfig's across a :Lazy update.
+                local root = vim.fs.root(bufnr, vim.lsp.config.pyright.root_markers)
+                if root then
+                    on_dir(root)
+                    return
+                end
+
+                -- Never ~ or /: pyright indexes everything under its root. An
+                -- unnamed buffer, or a folder that does not exist yet, has no
+                -- realpath and no root either. on_dir(nil) still starts the
+                -- server -- vim.lsp.start looks for the markers itself, finds
+                -- none, and runs without a root as before -- where not calling
+                -- on_dir at all would leave the buffer with no pyright. realpath
+                -- on both sides, because nvim resolves symlinks in buffer names
+                -- on macOS and $HOME need be neither resolved nor slash-free.
+                local name = vim.api.nvim_buf_get_name(bufnr)
+                local dir = name ~= "" and vim.fs.dirname(name) or nil
+                local real = dir and vim.uv.fs_realpath(dir)
+                if not real or real == "/" or real == vim.uv.fs_realpath(vim.fs.normalize("~")) then
+                    on_dir(nil)
+                    return
+                end
+                on_dir(dir)
+            end,
+
+            -- pyright has no venv discovery of its own. With no pythonPath it
+            -- runs the first python3 on PATH, which outside an activated venv is
+            -- Homebrew's, so every third-party import was "could not be
+            -- resolved" and completed nothing. So when no venv is active, use
+            -- <root>/.venv or <root>/venv if there is one. An activated venv
+            -- still wins, as does a pythonPath set anywhere else. This runs once
+            -- per client, after root_dir has settled, on that client's own copy
+            -- of the config, so one project's interpreter never reaches another.
+            before_init = function(_, config)
+                local python = config.settings and config.settings.python
+                if vim.env.VIRTUAL_ENV or not config.root_dir then
+                    return
+                end
+                if not python or python.pythonPath then
+                    return
+                end
+                for _, venv in ipairs({ ".venv", "venv" }) do
+                    local interpreter = vim.fs.joinpath(config.root_dir, venv, "bin", "python")
+                    if vim.fn.executable(interpreter) == 1 then
+                        python.pythonPath = interpreter
+                        return
+                    end
+                end
+            end,
+        }
 
         -- rust-analyzer: use the rustup-managed binary (not mason's),
         -- enable all cargo features, run clippy on save
