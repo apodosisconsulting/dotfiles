@@ -571,6 +571,33 @@ else
   ok ".zshrc sets Homebrew's environment itself rather than running brew shellenv on every shell"
 fi
 
+# zle starts in vi mode when $EDITOR or $VISUAL mentions vi, and .zshrc exports
+# EDITOR=nvim, so with no keymap chosen every shell started from a shell came up
+# in vi insert mode while a fresh terminal did not. The choice has to come
+# before compinit, which binds its ^X keys into whichever keymap is current,
+# and the last one in the file is the one that holds.
+keymap="$(awk '
+  /^[[:space:]]*#/ { next }
+  /^[[:space:]]*bindkey[[:space:]]+(-e|-v|-A[[:space:]])/ {
+    sub(/#.*/, ""); gsub(/[[:space:]]+/, " "); sub(/^ /, ""); sub(/ $/, "")
+    last = NR ":" $0
+  }
+  END { print last }
+' zsh/.zshrc 2>/dev/null)"
+keymap_at="${keymap%%:*}"
+compinit_at="$(grep -m1 -nE '^[[:space:]]*compinit([[:space:]]|$)' zsh/.zshrc 2>/dev/null | cut -d: -f1)"
+if [ -z "$keymap" ]; then
+  bad ".zshrc chooses no keymap — a shell that inherits EDITOR=nvim starts in vi insert mode"
+elif [ -z "$compinit_at" ]; then
+  bad "could not find where .zshrc runs compinit — the keymap ordering check would be vacuous"
+elif [ "${keymap#*:}" != "bindkey -e" ]; then
+  bad ".zshrc's last keymap choice is '${keymap#*:}', not 'bindkey -e' (line $keymap_at)"
+elif [ "$keymap_at" -ge "$compinit_at" ]; then
+  bad "bindkey -e (line $keymap_at) comes after compinit (line $compinit_at) — compinit's ^X keys land in the keymap EDITOR picked"
+else
+  ok ".zshrc pins the emacs keymap before compinit, whatever EDITOR a shell inherits"
+fi
+
 section "Known shell traps"
 # A pipeline ending in a quiet grep, under `set -o pipefail`: grep exits on the
 # first match, the producer takes SIGPIPE, and the pipeline reports FAILURE even

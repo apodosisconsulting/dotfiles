@@ -331,6 +331,21 @@ mutate "a broken .zshrc is caught" ".zshrc parses" \
 mutate "brew shellenv run from .zshrc again is caught" "rather than running brew shellenv" \
   bash -c 'printf "\neval \"\$(/opt/homebrew/bin/brew shellenv)\"\n" >> zsh/.zshrc'
 
+# The defect this exists for: no keymap chosen, so EDITOR=nvim picks vi mode.
+mutate "no bindkey -e in .zshrc is caught" "pins the emacs keymap" \
+  sed -i '' '/^bindkey -e$/d' zsh/.zshrc
+
+# Chosen after compinit, which has already bound its ^X keys elsewhere.
+mutate "bindkey -e moved below compinit is caught" "pins the emacs keymap" \
+  bash -c "sed -i '' '/^bindkey -e\$/d' zsh/.zshrc && printf '\nbindkey -e\n' >> zsh/.zshrc"
+
+# Last write wins: a later bindkey -v is the keymap every shell gets.
+mutate "a later bindkey -v is caught" "pins the emacs keymap" \
+  bash -c 'printf "\nbindkey -v\n" >> zsh/.zshrc'
+
+mutate "no findable compinit fails the keymap order rather than passing vacuously" "pins the emacs keymap" \
+  sed -i '' 's/^\([[:space:]]*\)compinit/\1: compinit/' zsh/.zshrc
+
 # The injected line is assembled from a format string rather than written
 # literally: spelled out, it is itself the hazard, and check.sh would flag this
 # file for containing its own test data.

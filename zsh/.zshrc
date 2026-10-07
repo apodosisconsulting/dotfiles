@@ -68,6 +68,27 @@ npm()  { nvm use --silent >/dev/null 2>&1; unset -f npm;  command npm  "$@"; }
 npx()  { nvm use --silent >/dev/null 2>&1; unset -f npx;  command npx  "$@"; }
 
 # -------------------------
+# Line editing: emacs keys, whatever $EDITOR says
+# -------------------------
+# With no keymap chosen, zle starts in vi mode when $EDITOR or $VISUAL mentions
+# vi. This file exports EDITOR=nvim, so a fresh terminal got emacs keys while
+# any shell started from one (exec zsh, a nested zsh, nvim's :terminal, a tmux
+# server started from a shell) got vi insert mode, where Ctrl-A, Ctrl-E and
+# Ctrl-Y type themselves. Chosen before compinit, which binds its ^X keys into
+# whichever keymap is current. /etc/zshrc has already bound Delete, Home, End
+# and the arrows into that keymap, so those five are bound again in emacs.
+bindkey -e
+() {
+  local k w
+  for k w in Delete delete-char Home beginning-of-line End end-of-line \
+    Up up-line-or-search Down down-line-or-search; do
+    if [[ -n ${key[$k]-} ]]; then
+      bindkey "${key[$k]}" $w
+    fi
+  done
+}
+
+# -------------------------
 # Completion (cached daily for speed)
 # -------------------------
 autoload -Uz compinit

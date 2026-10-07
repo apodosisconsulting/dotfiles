@@ -176,6 +176,70 @@ else
     [ "$once" = "$(nested "typeset -U path PATH")" ]
 fi
 
+# The whole file, run as a terminal runs it, in a scratch HOME: with ZDOTDIR
+# unset zsh reads .zshrc from HOME, and the history, completion dump and
+# starship cache it writes land there too, so nothing of the caller's is read
+# or written. env -i keeps the caller's own EDITOR out. TERM is a real terminal
+# type, because /etc/zshrc looks its keys up in terminfo and a dumb terminal
+# has none. Run from the scratch dir, so nothing the prompt does looks at the
+# caller's directory.
+rc_home() { # $1 = a name; stdin = the .zshrc to run. Prints the new HOME.
+  mkdir -p "$TEST_TMP/$1"
+  cat >"$TEST_TMP/$1/.zshrc"
+  printf '%s' "$TEST_TMP/$1"
+}
+in_rc() { # $1 = a HOME from rc_home, $2... = env assignments, then the command
+  local home="$1"
+  shift
+  (cd "$TEST_TMP" && env -i HOME="$home" TERM=xterm-256color PATH=/usr/bin:/bin \
+    STARSHIP_CONFIG="$REPO_ROOT/starship/.config/starship.toml" "$@")
+}
+real_home="$(rc_home real <"$ZSHRC")"
+
+echo
+echo "== the keymap is emacs whether or not EDITOR was inherited =="
+# zle starts in vi insert mode when $EDITOR or $VISUAL mentions vi. .zshrc
+# exports EDITOR=nvim, so a shell started from a shell (exec zsh, a nested zsh,
+# nvim's :terminal) came up in vi mode, where Ctrl-A types itself, while a
+# fresh terminal did not. One line per key: a name, then the widget it runs.
+# shellcheck disable=SC2016  # zsh code, expanded by zsh
+probe_keys='k() { local b; b=$(bindkey -- "$2"); print -r -- "$1 ${b##* }"; }
+  print -r -- "main $(bindkey -lL main)"
+  k ctrl-a "^A"
+  k ctrl-x-h "^Xh"
+  k delete "$terminfo[kdch1]"
+  k home "$terminfo[khome]"
+  k up "$terminfo[kcuu1]"'
+keys="$(in_rc "$real_home" zsh -i -c "$probe_keys" 2>/dev/null)"
+assert "a fresh terminal's shell gets emacs keys" \
+  contains "$keys" "main bindkey -A emacs main"
+keys="$(in_rc "$real_home" EDITOR=nvim VISUAL=nvim zsh -i -c "$probe_keys" 2>/dev/null)"
+assert "so does one that inherited EDITOR=nvim" \
+  contains "$keys" "main bindkey -A emacs main"
+assert "...where Ctrl-A goes to the start of the line" \
+  contains "$keys" "ctrl-a beginning-of-line"
+assert "...and compinit's Ctrl-X h is bound, because emacs was chosen before it" \
+  contains "$keys" "ctrl-x-h _complete_help"
+if [ -r /etc/zshrc ]; then
+  assert "...and Delete deletes, as /etc/zshrc binds it" \
+    contains "$keys" "delete delete-char"
+  assert "...and Home goes to the start of the line, as /etc/zshrc binds it" \
+    contains "$keys" "home beginning-of-line"
+  assert "...and Up searches on what is already typed, as /etc/zshrc binds it" \
+    contains "$keys" "up up-line-or-search"
+else
+  printf '  \033[33mSKIP\033[0m  %s\n' "no /etc/zshrc, so there are no system key bindings to carry into emacs"
+fi
+
+# Inline negative control: the same file without bindkey -e comes up in vi
+# mode, so the assertions above are about that line and not this environment.
+no_emacs="$(sed '/^[[:space:]]*bindkey -e$/d' "$ZSHRC" | rc_home no-emacs)"
+refute "a copy of .zshrc without bindkey -e really is different" \
+  cmp -s "$ZSHRC" "$no_emacs/.zshrc"
+keys="$(in_rc "$no_emacs" EDITOR=nvim VISUAL=nvim zsh -i -c "$probe_keys" 2>/dev/null)"
+assert "...and with EDITOR=nvim inherited that copy comes up in vi insert mode" \
+  contains "$keys" "main bindkey -A viins main"
+
 echo
 echo "== a missing ~/.zshrc.local must not poison \$? =="
 # It is the last statement in the file, so with `[[ -f x ]] && source x` and no
