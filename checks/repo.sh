@@ -705,10 +705,11 @@ section "Git"
 # templates are what prove the negations still win.
 #
 # A fresh repo in a temp dir, so this repo's own .gitignore cannot answer for
-# it. GIT_DIR and GIT_INDEX_FILE are unset first: the pre-commit hook runs this
-# with both pointing at the real repository, where `git init` would
-# reinitialise it and check-ignore would read its excludes. A subshell, so the
-# trap that removes the temp dir cannot replace one check.sh sets.
+# it. GIT_DIR and GIT_INDEX_FILE are unset first. The pre-commit hook exports
+# GIT_INDEX_FILE, and from a linked worktree GIT_DIR too, both naming the real
+# repository's files; with GIT_DIR set, `git init` would reinitialise that
+# repository and check-ignore would read its excludes. A subshell, so the trap
+# that removes the temp dir cannot replace one check.sh sets.
 GLOBAL_IGNORE="git/.config/git/ignore"
 ign_out="$(
   unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_CONFIG_PARAMETERS
