@@ -346,6 +346,16 @@ mutate "a later bindkey -v is caught" "pins the emacs keymap" \
 mutate "no findable compinit fails the keymap order rather than passing vacuously" "pins the emacs keymap" \
   sed -i '' 's/^\([[:space:]]*\)compinit/\1: compinit/' zsh/.zshrc
 
+mutate "no interactive_comments in .zshrc is caught" "sets interactive_comments" \
+  sed -i '' '/^setopt interactive_comments$/d' zsh/.zshrc
+
+# Last write wins, in any of the spellings zsh accepts for turning it off.
+mutate "interactive_comments unset again later is caught" "sets interactive_comments" \
+  bash -c 'printf "\nunsetopt INTERACTIVE_COMMENTS\n" >> zsh/.zshrc'
+
+mutate "interactive_comments negated again later is caught" "sets interactive_comments" \
+  bash -c 'printf "\nsetopt autocd no_interactivecomments\n" >> zsh/.zshrc'
+
 # The injected line is assembled from a format string rather than written
 # literally: spelled out, it is itself the hazard, and check.sh would flag this
 # file for containing its own test data.

@@ -150,6 +150,12 @@ alias vim='nvim'
 # -------------------------
 setopt autocd
 setopt no_beep
+# A # that starts a word on the command line starts a comment, as in a script.
+# Off by default in an interactive shell, so a line pasted from the README with
+# its trailing comment ran the comment as arguments: `make stow  # Apply
+# symlinks (with dry-run)` read "(with dry-run)" as glob qualifiers and died,
+# and the line for make check opened a quote at "setup's". a#b is unaffected.
+setopt interactive_comments
 
 # -------------------------
 # fzf shell integration (Ctrl-R history, Ctrl-T files, Alt-C cd)

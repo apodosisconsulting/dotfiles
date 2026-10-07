@@ -241,6 +241,27 @@ assert "...and with EDITOR=nvim inherited that copy comes up in vi insert mode" 
   contains "$keys" "main bindkey -A viins main"
 
 echo
+echo "== a # on the command line starts a comment =="
+# Off by default in an interactive zsh, so a command pasted with its trailing
+# comment, which is how the README writes its usage lines, ran with the
+# comment's words as arguments. Typed on stdin, not passed with -c: a -c script
+# treats # as a comment even under -i, so it could not tell the difference.
+typed='print -r -- a # b
+print -r -- c#d'
+out="$(printf '%s\n' "$typed" | in_rc "$real_home" zsh -i 2>/dev/null)"
+assert "a command typed with a trailing comment runs without it" \
+  [ "$(printf '%s\n' "$out" | sed -n 1p)" = "a" ]
+assert "...while a # inside a word is still just a character" \
+  [ "$(printf '%s\n' "$out" | sed -n 2p)" = "c#d" ]
+
+no_comments="$(sed '/^[[:space:]]*setopt interactive_comments$/d' "$ZSHRC" | rc_home no-comments)"
+refute "a copy of .zshrc without interactive_comments really is different" \
+  cmp -s "$ZSHRC" "$no_comments/.zshrc"
+out="$(printf '%s\n' "$typed" | in_rc "$no_comments" zsh -i 2>/dev/null)"
+assert "...and that copy passes the comment along as arguments, so the test can fail" \
+  [ "$(printf '%s\n' "$out" | sed -n 1p)" = "a # b" ]
+
+echo
 echo "== a missing ~/.zshrc.local must not poison \$? =="
 # It is the last statement in the file, so with `[[ -f x ]] && source x` and no
 # override present the exit status is 1 and starship draws its error character

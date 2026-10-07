@@ -598,6 +598,29 @@ else
   ok ".zshrc pins the emacs keymap before compinit, whatever EDITOR a shell inherits"
 fi
 
+# Without interactive_comments, a command pasted from the README with its
+# trailing comment runs the comment as arguments. Read as zsh reads option
+# names -- any case, underscores ignored, "no" negates -- and the last setopt
+# or unsetopt that names it is the one that holds.
+comments="$(awk '
+  /^[[:space:]]*#/ { next }
+  $1 == "setopt" || $1 == "unsetopt" {
+    for (i = 2; i <= NF; i++) {
+      if ($i ~ /^#/) break
+      o = tolower($i); gsub(/_/, "", o)
+      on = ($1 == "setopt")
+      if (o ~ /^no/) { o = substr(o, 3); on = !on }
+      if (o == "interactivecomments") state = (on ? "on" : "off") ":" NR
+    }
+  }
+  END { print state }
+' zsh/.zshrc 2>/dev/null)"
+case "$comments" in
+  on:*) ok ".zshrc sets interactive_comments, so a pasted command's trailing # comment stays a comment" ;;
+  off:*) bad ".zshrc turns interactive_comments off again at line ${comments#*:} — a pasted # comment becomes arguments" ;;
+  *) bad ".zshrc never sets interactive_comments — a pasted # comment becomes arguments" ;;
+esac
+
 section "Known shell traps"
 # A pipeline ending in a quiet grep, under `set -o pipefail`: grep exits on the
 # first match, the producer takes SIGPIPE, and the pipeline reports FAILURE even
