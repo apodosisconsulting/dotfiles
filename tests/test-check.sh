@@ -348,8 +348,17 @@ mutate_machine "a missing git hook is caught" "hooks installed" \
 mutate_machine "hooks pointing nowhere is caught" "hooks installed" \
   git config core.hooksPath .nonexistent-hooks
 
-mutate_machine "a git identity that disagrees with the repo is caught" "user.email agrees" \
+mutate_machine "a git identity that disagrees with the repo is caught" "keys the repo's git config sets" \
   git config --local user.email someone-else@example.com
+
+# Not just the identity: ANY key git resolves to something else makes the
+# repo's line for it dead. The repo's side is changed here rather than the live
+# side, so this needs nothing written outside the copy.
+mutate_machine "any other key that disagrees with what git uses is caught" "keys the repo's git config sets" \
+  sed -i '' 's/algorithm = histogram/algorithm = patience/' git/.config/git/config
+
+mutate_machine "a git config with no keys fails rather than passing vacuously" "keys the repo's git config sets" \
+  bash -c ': >git/.config/git/config'
 
 # ------------------------------------------------------ what the linters can see
 

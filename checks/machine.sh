@@ -129,20 +129,36 @@ elif [ "$missing" -eq 0 ]; then
   ok "every path the configs hardcode exists ($paths_seen checked, across every tracked config)"
 fi
 
-section "Git identity"
+section "Git config"
 # ~/.gitconfig is read AFTER the stowed config, so anything it sets wins. When
 # the two disagree the repo's copy is dead and nothing says so.
-for k in user.email user.name; do
-  repo_v="$(git config --file "$REPO/git/.config/git/config" --get "$k" 2>/dev/null)"
+#
+# ANY key, not just the identity this used to compare. An init.defaultBranch or
+# a pull.rebase in ~/.gitconfig kills the repo's line for it just as surely,
+# and the stowed file goes on reading as the config in use. So every key the
+# repo's file sets is compared with what git resolves from here, which is what
+# any git command in a repo sees. Not `git config --global`: on git 2.53 that
+# reads ~/.gitconfig ALONE when it exists, never the stowed file, and would call
+# every key the repo sets unset. Read line by line, because a subsection name
+# may hold a space.
+gitconf="$REPO/git/.config/git/config"
+git_keys=0
+git_dead=0
+while IFS= read -r k; do
+  [ -n "$k" ] || continue
+  git_keys=$((git_keys + 1))
+  repo_v="$(git config --file "$gitconf" --get "$k" 2>/dev/null)"
   live_v="$(git config --get "$k" 2>/dev/null)"
-  if [ -z "$repo_v" ]; then
-    meh "$k is not set in the repo's git config"
-  elif [ "$repo_v" = "$live_v" ]; then
-    ok "$k agrees between the repo and what git actually uses ($live_v)"
-  else
-    bad "$k: repo says '$repo_v' but git uses '$live_v' — the repo's value is dead"
+  if [ "$repo_v" != "$live_v" ]; then
+    bad "$k: repo says '$repo_v' but git uses '${live_v:-<unset>}' — the repo's value is dead"
+    git_dead=$((git_dead + 1))
   fi
-done
+done < <(git config --file "$gitconf" --name-only --list 2>/dev/null | sort -u)
+if [ "$git_keys" -eq 0 ]; then
+  bad "read no keys out of git/.config/git/config — the comparison would be vacuous"
+elif [ "$git_dead" -eq 0 ]; then
+  ok "all $git_keys keys the repo's git config sets are what git actually uses"
+fi
 
 section "Terminal"
 scheme="$(grep -oE 'color_scheme = "[^"]+"' wezterm/.config/wezterm/wezterm.lua 2>/dev/null | sed 's/.*"\(.*\)"/\1/')"
