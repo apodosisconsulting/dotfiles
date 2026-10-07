@@ -432,6 +432,32 @@ mutate "rustfmt without the rustup install is caught" "formatters and linters th
 mutate "no formatters read out of conform.lua fails rather than passing vacuously" "formatters and linters the nvim config runs" \
   sed -i '' 's/formatters_by_ft = {/formatters_for = {/' nvim/.config/nvim/lua/rich/plugins/conform.lua
 
+# An entry written over three lines, a layout stylua keeps, with bootstrap's
+# line for one tool gone. The grep this check used to be read neither the name
+# on the inner line nor any entry after the first such one, and passed.
+spread_and_drop() { # $1=plugin file  $2=filetype to spread  $3=package to drop
+  FT="$2" perl -pi -e \
+    's/^(\s*)\Q$ENV{FT}\E = \{ ("[^"]+") \},$/$1$ENV{FT} = {\n$1    $2,\n$1},/' "$1" &&
+    sed -i '' "/^    $3\$/d" bootstrap.sh
+}
+
+mutate "a formatter on the inner line of a multi-line entry is read" "formatters and linters the nvim config runs" \
+  spread_and_drop nvim/.config/nvim/lua/rich/plugins/conform.lua python black
+
+mutate "the entries after a multi-line one are read too" "formatters and linters the nvim config runs" \
+  spread_and_drop nvim/.config/nvim/lua/rich/plugins/conform.lua python clang-format
+
+mutate "a linter in a multi-line entry is read" "formatters and linters the nvim config runs" \
+  spread_and_drop nvim/.config/nvim/lua/rich/plugins/lint.lua sh shellcheck
+
+# lint.lua had no guard at all: reading nothing out of it passed.
+mutate "no linters read out of lint.lua fails rather than passing vacuously" "formatters and linters the nvim config runs" \
+  sed -i '' 's/lint.linters_by_ft = {/lint.linters_for = {/' nvim/.config/nvim/lua/rich/plugins/lint.lua
+
+# A filetype that yields no name is reported, not counted as nothing to install.
+mutate "a filetype whose formatters are not a list of names is caught" "formatters and linters the nvim config runs" \
+  sed -i '' 's/lua = { "stylua" },/lua = function() return { "stylua" } end,/' nvim/.config/nvim/lua/rich/plugins/conform.lua
+
 # ------------------------------------------- constants written down more than once
 
 # The pair the comments named: the guard's floor and prune's idea of degenerate.
