@@ -207,6 +207,18 @@ mutate_machine "a wrong wezterm colour scheme is caught" "colour scheme" \
 mutate "a missing usstyle is caught" "usstyle" \
   sed -i '' 's/:RGB:usstyle/:RGB/' tmux/.config/tmux/tmux.conf
 
+# Declared, then thrown away: the line split in two with a reset between the
+# halves. usstyle and extkeys are still written in the file, and sync,
+# hyperlinks and overline come back after the reset, so only a check that reads
+# what tmux ends up with can tell. Used again for extkeys below.
+split_terminal_features() {
+  sed -i '' 's/:RGB:usstyle:extkeys:sync:hyperlinks:overline"$/:RGB:usstyle:extkeys"\
+set -su terminal-features\
+set -sa terminal-features ",*:RGB:sync:hyperlinks:overline"/' tmux/.config/tmux/tmux.conf
+}
+mutate "usstyle declared and then reset away is caught" "usstyle" \
+  split_terminal_features
+
 # The defect this exists for: an append with no reset before it, so every
 # prefix S adds another copy to the list.
 mutate "terminal-features appended to with no reset is caught" "reset before it is appended to" \
@@ -235,6 +247,13 @@ mutate "a Shift-bearing restore key without extended-keys is caught" "restore is
 
 mutate "a Shift-bearing restore key without the extkeys feature is caught" "restore is bound to" \
   sed -i '' 's/:RGB:usstyle:extkeys/:RGB:usstyle/' tmux/.config/tmux/tmux.conf
+
+mutate "extkeys declared and then reset away is caught" "restore is bound to" \
+  split_terminal_features
+
+# Last write wins: a later extended-keys off is the value tmux applies.
+mutate "a later extended-keys off is caught" "restore is bound to" \
+  bash -c "printf '\nset -s extended-keys off\n' >> tmux/.config/tmux/tmux.conf"
 
 mutate "no @resurrect-restore at all fails rather than passing vacuously" "restore is bound to" \
   sed -i '' '/^set -g @resurrect-restore/d' tmux/.config/tmux/tmux.conf

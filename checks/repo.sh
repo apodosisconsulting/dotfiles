@@ -253,15 +253,6 @@ else
 fi
 
 section "tmux config"
-# Anchored to the set-option line, not to any mention: the comment above it
-# explains what usstyle is, so a bare `grep usstyle` stayed green after the
-# setting itself was removed.
-if grep -qE '^[[:space:]]*set .*terminal-features.*usstyle' tmux/.config/tmux/tmux.conf; then
-  ok "terminal-features declares usstyle (undercurl survives)"
-else
-  bad "terminal-features lacks usstyle — nvim's diagnostic undercurls are stripped"
-fi
-
 # terminal-features is a list, `set -sa` appends to it, and prefix S sources
 # the whole file again. With nothing resetting the list first, every reload
 # added another copy of the line: nothing broke, and the list only grew. The
@@ -302,6 +293,16 @@ elif [ "$tf_reset" -gt "$tf_append" ]; then
 else
   ok "terminal-features is reset before it is appended to, so a reload does not add another copy"
 fi
+# usstyle is read from that same list, and so is extkeys in the restore check
+# below. Both used to be a grep for any set line naming them, which stayed
+# green with a reset under that line and tmux holding neither. The grep was
+# itself a fix: tmux.conf's comment explains what usstyle is, so a bare
+# `grep usstyle` stayed green after the setting was removed. The awk above
+# reads set lines only, and strips their trailing comments.
+case " $tf_feats " in
+  *" usstyle "*) ok "terminal-features declares usstyle (undercurl survives)" ;;
+  *) bad "terminal-features does not end up declaring usstyle — nvim's diagnostic undercurls are stripped" ;;
+esac
 tf_missing=""
 for f in sync hyperlinks overline; do
   case " $tf_feats " in
@@ -330,9 +331,20 @@ fi
 # and the binding still READS correct while becoming unreachable — the config
 # would claim a key that cannot be pressed. So any Shift-bearing restore key
 # requires both.
+#
+# Both are read the way tmux applies them. extended-keys is the LAST line that
+# sets it, so a later `set -s extended-keys off` counts; extkeys comes from the
+# features appended after the last terminal-features reset, as above. Counting
+# lines that mention either, which this did, stayed green with tmux holding
+# neither.
 restore_key="$(tmux_setting '@resurrect-restore')"
-ext_on="$(grep -cE '^[[:space:]]*set -s[g]? extended-keys on' "$TMUXCONF")"
-ext_feat="$(grep -cE '^[[:space:]]*set -sa terminal-features .*extkeys' "$TMUXCONF")"
+ext_keys="$(grep -E '^[[:space:]]*set(-option)?([[:space:]]+-[A-Za-z]+)*[[:space:]]+extended-keys([[:space:]]|$)' "$TMUXCONF" |
+  tail -1 | sed 's/[[:space:]]#.*//' |
+  awk '{ for (i = 1; i < NF; i++) if ($i == "extended-keys") { v = $(i + 1); gsub(/["\047]/, "", v); print v; exit } }')"
+ext_on=0
+case "$ext_keys" in on | always) ext_on=1 ;; esac
+ext_feat=0
+case " $tf_feats " in *" extkeys "*) ext_feat=1 ;; esac
 needs_ext=no
 case "$restore_key" in
   *-S-*) needs_ext=yes ;;
@@ -342,9 +354,9 @@ if [ -z "$restore_key" ]; then
 elif [ "$restore_key" = "C-r" ]; then
   bad "@resurrect-restore is C-r, which is exactly what a held Ctrl turns 'prefix r' into"
 elif [ "$needs_ext" = yes ] && [ "$ext_on" -eq 0 ]; then
-  bad "@resurrect-restore is '$restore_key', but 'set -s extended-keys on' is missing — without it that is the same byte as the plain-Ctrl key and the binding is unreachable"
+  bad "@resurrect-restore is '$restore_key', but extended-keys does not end up on (last value: '${ext_keys:-unset}') — without it that is the same byte as the plain-Ctrl key and the binding is unreachable"
 elif [ "$needs_ext" = yes ] && [ "$ext_feat" -eq 0 ]; then
-  bad "@resurrect-restore is '$restore_key', but terminal-features never declares extkeys — tmux will not ask the terminal for the sequence that makes it distinct"
+  bad "@resurrect-restore is '$restore_key', but terminal-features does not end up declaring extkeys — tmux will not ask the terminal for the sequence that makes it distinct"
 else
   ok "restore is bound to '$restore_key', off the held-Ctrl path, with the extended-keys support that makes it a key the terminal can send"
 fi
