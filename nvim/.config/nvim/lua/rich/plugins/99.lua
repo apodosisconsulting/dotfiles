@@ -50,6 +50,12 @@ return {
                 -- custom_rules = {
                 --     "scratch/custom_rules/",
                 -- },
+                --
+                -- Empty rather than left out. 99 annotates this field as
+                -- required, so lua_ls flagged the whole completion table
+                -- without it; 99 itself puts {} in its place when it is
+                -- missing (state.lua), so this is the value it already had.
+                custom_rules = {},
 
                 --- Configure @file completion (all fields optional, sensible defaults)
                 files = {
@@ -85,7 +91,11 @@ return {
         -- likely ill add a mode check and assert on required visual mode
         -- so just prepare for it now
         vim.keymap.set("v", "<leader>9v", function()
-            _99.visual()
+            -- An empty opts table rather than none, here and in search below.
+            -- 99's annotations make opts required for both, so lua_ls flagged
+            -- each call; both functions treat nil as {} (process_opts), so
+            -- this is what they already received.
+            _99.visual({})
         end, { desc = "99: Visual" })
 
         --- if you have a request you dont want to make any changes, just cancel it
@@ -94,7 +104,7 @@ return {
         end, { desc = "99: Stop all" })
 
         vim.keymap.set("n", "<leader>9s", function()
-            _99.search()
+            _99.search({})
         end, { desc = "99: Search" })
     end,
 }

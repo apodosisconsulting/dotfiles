@@ -141,7 +141,11 @@ return {
             -- per client, after root_dir has settled, on that client's own copy
             -- of the config, so one project's interpreter never reaches another.
             before_init = function(_, config)
-                local python = config.settings and config.settings.python
+                -- A table, from lspconfig's pyright settings. Neovim types
+                -- every settings value as any JSON value, strings included,
+                -- so lua_ls refused the pythonPath assignment below until
+                -- told; lspconfig's own pyright.lua makes the same cast.
+                local python = config.settings and config.settings.python --[[@as table?]]
                 if vim.env.VIRTUAL_ENV or not config.root_dir then
                     return
                 end

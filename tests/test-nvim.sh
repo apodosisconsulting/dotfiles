@@ -314,12 +314,63 @@ if [ -x "$HOME/.local/share/nvim/mason/bin/lua-language-server" ]; then
   # The definition is polled: lua_ls answers "none" until it has loaded its
   # library, so one early answer says nothing either way. The file is opened
   # from a .txt, so the only lua_ls running is the one rooted at the config.
+  #
+  # Knowing vim.* is also what lets lua_ls hold this config's calls to the
+  # plugins' own annotations. While .luarc.json replaced the library it checked
+  # nothing and said nothing; once lazydev's library got through, it found 9
+  # warnings in 99.lua, lsp.lua, treesitter.lua and trouble.lua, and options.lua
+  # sets virtual_text, so each one sat inline in the file. So the same nvim also
+  # asks what lua_ls reports in every lua file of the config, and requires
+  # nothing.
+  #
+  # lua_ls pushes diagnostics and cannot be asked for them (it answers
+  # textDocument/diagnostic with "method not found"), and it publishes nothing
+  # at all for a file with nothing wrong, so silence is all a clean file says.
+  # Silence is also what a lua_ls that never looked would say. So a canary goes
+  # in with the config's files: a vim.api call with its arguments missing, in a
+  # scratch buffer named inside the config, so it is diagnosed as one of them.
+  # Every one is opened before lua_ls starts loading its workspace, so one load
+  # covers every plugin they require and one pass diagnoses them all. A file
+  # opened after the load was measured putting the others off by 3.6s. Only
+  # once lua_ls has flagged the canary, has no progress report open, and has
+  # published nothing for 3s, is the count read.
   cat >"$SANDBOX/luadef_probe.lua" <<'LUA'
-vim.cmd.edit(vim.fn.fnameescape(vim.fn.stdpath("config") .. "/lua/rich/options.lua"))
+local busy, said = {}, vim.uv.now()
+vim.api.nvim_create_autocmd("LspProgress", {
+  callback = function(ev)
+    busy[ev.data.params.token] = ev.data.params.value.kind ~= "end" or nil
+  end,
+})
+local publish = vim.lsp.handlers["textDocument/publishDiagnostics"]
+vim.lsp.handlers["textDocument/publishDiagnostics"] = function(...)
+  said = vim.uv.now()
+  return publish(...)
+end
+local config = vim.fn.stdpath("config")
+vim.cmd.edit(vim.fn.fnameescape(config .. "/lua/rich/options.lua"))
+local files = vim.list_extend({ config .. "/init.lua" }, vim.fn.globpath(config, "lua/**/*.lua", false, true))
+for _, f in ipairs(files) do
+  local b = vim.fn.bufadd(f)
+  vim.fn.bufload(b)
+  vim.bo[b].filetype = "lua"
+end
 vim.wait(20000, function()
   return #vim.lsp.get_clients({ bufnr = 0, name = "lua_ls" }) > 0
-end, 250)
+end, 50)
 local client = vim.lsp.get_clients({ bufnr = 0, name = "lua_ls" })[1]
+-- A scratch buffer is buftype=nofile, which no :w can write, so its name puts
+-- it in lua_ls's workspace and nothing on disk. It is attached by hand,
+-- because nvim attaches no server to a nofile buffer, and without FileType,
+-- which nothing else needs to see.
+local canary = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_name(canary, config .. "/luadiag_canary.lua")
+vim.api.nvim_buf_set_lines(canary, 0, -1, false, { "vim.api.nvim_buf_get_lines()" })
+vim.api.nvim_buf_call(canary, function()
+  vim.cmd("noautocmd setlocal filetype=lua")
+end)
+if client then
+  vim.lsp.buf_attach_client(canary, client.id)
+end
 local row, col
 for i, l in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
   local s = l:find("vim.api.nvim_", 1, true)
@@ -343,6 +394,28 @@ if client and row then
   end, 500)
 end
 print(string.format("LUADEF_ATTACHED=%s LUADEF_CALL=%s LUADEF=%s", tostring(client ~= nil), tostring(row ~= nil), def))
+if def == "none" then
+  return
+end
+local flagged = false
+vim.wait(60000, function()
+  for _, d in ipairs(vim.diagnostic.get(canary)) do
+    flagged = flagged or d.code == "missing-parameter"
+  end
+  return flagged and next(busy) == nil and vim.uv.now() - said >= 3000
+end, 250)
+local reported = {}
+for _, d in ipairs(vim.diagnostic.get()) do
+  if d.bufnr ~= canary and d.source and d.source:find("Lua") then
+    local name = vim.api.nvim_buf_get_name(d.bufnr):sub(#config + 2)
+    table.insert(reported, string.format("%s:%d [%s] %s", name, d.lnum + 1, tostring(d.code), (d.message:gsub("\n", " "))))
+  end
+end
+table.sort(reported)
+for _, l in ipairs(reported) do
+  print("LUADIAG " .. l)
+end
+print(string.format("LUADIAG_CANARY=%s LUADIAG_FILES=%d LUADIAG_TOTAL=%d", tostring(flagged), #files, #reported))
 LUA
   : >"$SANDBOX/luadef.txt"
   out="$(nv "$SANDBOX/luadef.txt" "luafile $SANDBOX/luadef_probe.lua")"
@@ -353,6 +426,15 @@ LUA
     contains "$out" "LUADEF_CALL=true"
   assert "lua_ls finds that call's definition in Neovim's own runtime" \
     contains "${luadef:-none}" "/lua/vim/_meta/"
+  luadiag_files="$(printf '%s' "$out" | sed -n 's/.*LUADIAG_FILES=\([0-9]*\).*/\1/p' | head -1)"
+  luadiag_total="$(printf '%s' "$out" | sed -n 's/.*LUADIAG_TOTAL=\([0-9]*\).*/\1/p' | head -1)"
+  printf "    lua_ls reports %s problem(s) across %s of the config's lua files\n" \
+    "${luadiag_total:-an unread number of}" "${luadiag_files:-0}"
+  printf '%s\n' "$out" | sed -n 's/^LUADIAG \(.*\)/      \1/p'
+  assert "lua_ls flags the canary's call, so it was checking calls (guards a vacuous pass)" \
+    contains "$out" "LUADIAG_CANARY=true"
+  assert "...with the whole config open, not a fragment of it" [ "${luadiag_files:-0}" -ge 20 ]
+  assert "lua_ls reports nothing in any of the config's own lua files" [ "${luadiag_total:-1}" -eq 0 ]
 else
   printf '  \033[33mSKIP\033[0m  lua-language-server is not installed via mason\n'
 fi
