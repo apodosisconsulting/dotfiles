@@ -8,6 +8,12 @@ __MACOSX/
 # Python and Node build products. Each project should ignore its own, but a
 # repo whose .gitignore is missing must still not be able to commit a virtual
 # environment or a dependency tree with one `git add -A`.
+#
+# Not only git reads this file. ripgrep and fd honour it inside any git repo,
+# so in a repo that does not ignore these itself they also vanish from rg, fd
+# and telescope's find_files and live_grep, which run rg. Usually what a
+# search wants; to look inside one anyway, rg --no-ignore-global or
+# fd --no-ignore-vcs.
 .venv/
 __pycache__/
 node_modules/
