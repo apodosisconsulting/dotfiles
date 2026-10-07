@@ -258,6 +258,22 @@ mutate "a deprecated Neovim API is caught" "deprecated" \
 mutate "a plugin file with no lazy spec is caught" "lazy spec" \
   sed -i '' 's/^return {/local _unused = {/' nvim/.config/nvim/lua/rich/plugins/fidget.lua
 
+# The defect this exists for, replayed: a library in .luarc.json replaces the
+# one lazydev sends, and vim.* loses its definitions.
+# shellcheck disable=SC2016  # ${3rd} is lua_ls's placeholder, not the shell's
+mutate "a .luarc.json that sets workspace.library again is caught" "leaves workspace.library and diagnostics.globals to lazydev" \
+  sed -i '' 's|"workspace.checkThirdParty": false,|"workspace.library": ["${3rd}/luv/library"], "workspace.checkThirdParty": false,|' nvim/.config/nvim/.luarc.json
+
+# lua_ls reads the nested spelling, with a Lua. prefix, as the same key.
+mutate "the same key spelled as nested objects is caught too" "leaves workspace.library and diagnostics.globals to lazydev" \
+  sed -i '' 's|"runtime.version": "LuaJIT"|"runtime.version": "LuaJIT", "Lua": {"workspace": {"library": []}}|' nvim/.config/nvim/.luarc.json
+
+mutate "a .luarc.json that silences undefined vim again is caught" "leaves workspace.library and diagnostics.globals to lazydev" \
+  sed -i '' 's|"workspace.checkThirdParty": false,|"workspace.checkThirdParty": false, "diagnostics.globals": ["vim"],|' nvim/.config/nvim/.luarc.json
+
+mutate "a missing .luarc.json fails rather than reading as one that sets nothing" "leaves workspace.library and diagnostics.globals to lazydev" \
+  rm nvim/.config/nvim/.luarc.json
+
 # The defect this exists for, replayed: 0bdf224 flipped this line inside a
 # commit about LSP errors, trailing space and all.
 mutate "line wrap flipped off is caught" "line wrap is on" \

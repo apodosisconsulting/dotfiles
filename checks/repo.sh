@@ -160,6 +160,49 @@ else
   bad "lazy-lock.json is not tracked — a fresh machine gets whatever is newest that day"
 fi
 
+# .luarc.json must leave the library to lazydev.
+#
+# lua_ls lets .luarc.json override the settings its client sends, and lazydev
+# works by sending them. This file set workspace.library to luv alone, which
+# replaced lazydev's whole library: vim.api had no definition and no hover
+# anywhere in this config, and diagnostics.globals = ["vim"] silenced the one
+# warning that would have said so. The file itself stays, as lua_ls's root
+# marker; it is the two keys that are not allowed.
+#
+# Parsed rather than grepped, because lua_ls reads a nested
+# {"workspace": {"library": ...}} the same as the dotted key, with or without a
+# "Lua." prefix; every leaf is printed as one dotted key. A file that is
+# missing, does not parse, or holds no keys at all fails, rather than reading as
+# a file that sets nothing.
+LUARC="nvim/.config/nvim/.luarc.json"
+if command -v nvim >/dev/null 2>&1; then
+  # A plain string, not a heredoc in $( ), for the bash 3.2 reason given above
+  # the lua parse check: so no apostrophes anywhere in it.
+  luarc_keys="$(printf '%s\n' 'local f = io.open(arg[1])
+if not f then return end
+local ok, t = pcall(vim.json.decode, f:read("*a"))
+f:close()
+if not ok or type(t) ~= "table" then return end
+local function walk(prefix, v)
+  if type(v) == "table" and next(v) ~= nil and not vim.islist(v) then
+    for k, x in pairs(v) do walk(prefix .. k .. ".", x) end
+  else
+    io.stdout:write((prefix:sub(1, -2):gsub("^Lua%.", "")), "\n")
+  end
+end
+walk("", t)' | nvim --clean --headless -l /dev/stdin "$LUARC" 2>/dev/null)"
+  luarc_bad="$(printf '%s\n' "$luarc_keys" | grep -E '^(workspace\.library|diagnostics\.globals)$' | paste -sd, -)"
+  if [ -z "$luarc_keys" ]; then
+    bad "could not read any setting out of $LUARC — missing, not JSON, or empty, so whether it overrides lazydev cannot be said"
+  elif [ -n "$luarc_bad" ]; then
+    bad "$LUARC sets $luarc_bad — lua_ls lets that file override what lazydev sends, so vim.* gets no definitions or hover in this config"
+  else
+    ok ".luarc.json leaves workspace.library and diagnostics.globals to lazydev, so lua_ls knows what vim.* is"
+  fi
+else
+  meh "nvim not installed, cannot parse $LUARC"
+fi
+
 # Line wrap, and which way round it has to point.
 #
 # This is the one option in options.lua whose value has already been changed by

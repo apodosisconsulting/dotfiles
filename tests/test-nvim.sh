@@ -260,6 +260,55 @@ if [ -x "$HOME/.local/share/nvim/mason/bin/lua-language-server" ]; then
     'lua local c = vim.lsp.get_clients({ bufnr = 0 }); print("FT=" .. vim.bo.filetype .. " CLIENTS=" .. #c .. " NAME=" .. (c[1] and c[1].name or "none"))')"
   assert "the filetype is detected" contains "$out" "FT=lua"
   assert "a language server attached" contains "$out" "NAME=lua_ls"
+
+  # Attaching is not knowing anything. In this config's own files lua_ls had no
+  # definition and no hover for vim.api, because .luarc.json set a library that
+  # replaced the one lazydev sends -- and attached all the same. checks/repo.sh
+  # reads .luarc.json; this asks lua_ls itself, in a file of the config nvim is
+  # running, where the vim.api function the file calls is defined.
+  #
+  # The definition is polled: lua_ls answers "none" until it has loaded its
+  # library, so one early answer says nothing either way. The file is opened
+  # from a .txt, so the only lua_ls running is the one rooted at the config.
+  cat >"$SANDBOX/luadef_probe.lua" <<'LUA'
+vim.cmd.edit(vim.fn.fnameescape(vim.fn.stdpath("config") .. "/lua/rich/options.lua"))
+vim.wait(20000, function()
+  return #vim.lsp.get_clients({ bufnr = 0, name = "lua_ls" }) > 0
+end, 250)
+local client = vim.lsp.get_clients({ bufnr = 0, name = "lua_ls" })[1]
+local row, col
+for i, l in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
+  local s = l:find("vim.api.nvim_", 1, true)
+  if s and not l:match("^%s*%-%-") then
+    -- 0-based, and a few characters into the function name after "vim.api."
+    row, col = i - 1, s + 9
+    break
+  end
+end
+local def = "none"
+if client and row then
+  local params = { textDocument = { uri = vim.uri_from_bufnr(0) }, position = { line = row, character = col } }
+  vim.wait(30000, function()
+    local res = client:request_sync("textDocument/definition", params, 5000, 0)
+    local r = res and res.result
+    if r and r[1] then
+      def = vim.uri_to_fname(r[1].uri or r[1].targetUri)
+      return true
+    end
+    return false
+  end, 500)
+end
+print(string.format("LUADEF_ATTACHED=%s LUADEF_CALL=%s LUADEF=%s", tostring(client ~= nil), tostring(row ~= nil), def))
+LUA
+  : >"$SANDBOX/luadef.txt"
+  out="$(nv "$SANDBOX/luadef.txt" "luafile $SANDBOX/luadef_probe.lua")"
+  luadef="$(printf '%s' "$out" | sed -n 's/.*LUADEF=\([^ ]*\).*/\1/p' | head -1)"
+  printf '    vim.api in options.lua is defined at %s\n' "${luadef:-nothing nvim printed}"
+  assert "lua_ls attaches to a file of this config" contains "$out" "LUADEF_ATTACHED=true"
+  assert "the probe found a vim.api call to ask about (guards a vacuous pass)" \
+    contains "$out" "LUADEF_CALL=true"
+  assert "lua_ls finds that call's definition in Neovim's own runtime" \
+    contains "${luadef:-none}" "/lua/vim/_meta/"
 else
   printf '  \033[33mSKIP\033[0m  lua-language-server is not installed via mason\n'
 fi
