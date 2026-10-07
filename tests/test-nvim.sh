@@ -250,6 +250,50 @@ if ! contains "$out" "TYPED_LINES="; then
   printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
 fi
 
+# ...and only in files. The autocmd fires on every FileType, and a prompt
+# buffer has one: Telescope's is TelescopePrompt. With textwidth 80 and 't' a
+# query typed past column 80 was broken onto a new line as it was typed, and
+# Telescope searched only for the text after the break. So type one, into a
+# real find_files, and count the prompt's lines. The assertions above are the
+# other half: excluding the prompt must not exclude a file.
+cat >"$SANDBOX/prompt_probe.lua" <<'LUA'
+local ok, builtin = pcall(require, "telescope.builtin")
+if not ok then
+  print("PROMPT_TELESCOPE=missing")
+  return
+end
+builtin.find_files({ cwd = vim.env.TW_DIR })
+vim.wait(3000, function() return vim.bo.filetype == "TelescopePrompt" end, 50)
+local buf = vim.api.nvim_get_current_buf()
+local query = string.rep("abcdefghi ", 9) .. "z"
+vim.api.nvim_feedkeys(query, "xt", false)
+local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+print(string.format("PROMPT_FT=%s PROMPT_BT=%s PROMPT_QUERY_COLS=%d PROMPT_LINES=%d PROMPT_WHOLE=%s PROMPT_TW=%d",
+  vim.bo[buf].filetype, vim.bo[buf].buftype, #query, #lines,
+  tostring(lines[1] ~= nil and lines[1]:sub(-#query) == query), vim.bo[buf].textwidth))
+LUA
+out="$(TW_DIR="$SANDBOX" nv "$SANDBOX/start.lua" 'lua vim.wait(1000)' "luafile $SANDBOX/prompt_probe.lua")"
+if contains "$out" "PROMPT_TELESCOPE=missing"; then
+  printf '  \033[33mSKIP\033[0m  telescope is not installed, so there is no prompt to type into\n'
+else
+  prompt_cols="$(printf '%s' "$out" | sed -n 's/.*PROMPT_QUERY_COLS=\([0-9]*\).*/\1/p')"
+  prompt_lines="$(printf '%s' "$out" | sed -n 's/.*PROMPT_LINES=\([0-9]*\).*/\1/p')"
+  prompt_tw="$(printf '%s' "$out" | sed -n 's/.*PROMPT_TW=\([0-9]*\).*/\1/p')"
+  printf "    typing %s columns into Telescope's prompt left %s line(s)\n" \
+    "${prompt_cols:-0}" "${prompt_lines:-0}"
+  # Without these the count below could be of some other buffer.
+  assert "the probe typed into Telescope's prompt buffer (guards a vacuous pass)" \
+    contains "$out" "PROMPT_FT=TelescopePrompt PROMPT_BT=prompt"
+  assert "...a query longer than 80 columns" [ "${prompt_cols:-0}" -gt 80 ]
+  assert "a long Telescope query stays on one line" [ "${prompt_lines:-0}" -eq 1 ]
+  assert "...and that line holds the whole query" contains "$out" "PROMPT_WHOLE=true"
+  # 80 is the failing side: a textwidth that could not be read must not pass.
+  assert "the prompt does not get the files' textwidth of 80" [ "${prompt_tw:-80}" -ne 80 ]
+  if ! contains "$out" "PROMPT_LINES="; then
+    printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+  fi
+fi
+
 echo
 echo "== an LSP client actually attaches to a real file =="
 # vim.wait with a predicate polls rather than sleeping a guess, so this either

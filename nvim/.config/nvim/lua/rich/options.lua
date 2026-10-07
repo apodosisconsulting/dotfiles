@@ -122,9 +122,17 @@ vim.api.nvim_create_autocmd("InsertLeave", {
 -- write and therefore the one that counts.
 --
 -- opt_local, not opt: these are buffer-local options and this fires per buffer.
+--
+-- Files only, which is what buftype "" means. A prompt buffer gets a FileType
+-- too -- Telescope's is TelescopePrompt -- and textwidth 80 with 't' broke a
+-- long query onto a new line as it was typed, so Telescope searched only for
+-- the text after the break. tests/test-nvim.sh types one into find_files.
 vim.api.nvim_create_autocmd("FileType", {
     group = augroup,
-    callback = function()
+    callback = function(args)
+        if vim.bo[args.buf].buftype ~= "" then
+            return
+        end
         vim.opt_local.textwidth = 80
         vim.opt_local.formatoptions:append("t")
     end,
