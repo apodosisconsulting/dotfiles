@@ -364,6 +364,17 @@ mutate "a later override setting YAML back to 4 is caught" "prettier indents YAM
 mutate "an unreadable home/.prettierrc fails rather than passing vacuously" "prettier indents YAML by 2" \
   bash -c 'printf "not json\n" >> home/.prettierrc'
 
+# Patterns a glob on the bare name cannot judge. Each of these had prettier
+# re-indent ci.yml at 4 while the check, matching them as plain globs, read 2.
+mutate "a later override for a path the check cannot judge is caught" "prettier indents YAML by 2" \
+  python3 -c 'import json; p = "home/.prettierrc"; c = json.load(open(p)); c["overrides"].append({"files": ".github/**/*.yml", "options": {"tabWidth": 4}}); open(p, "w").write(json.dumps(c))'
+
+mutate "an excludeFiles path the check cannot judge is caught" "prettier indents YAML by 2" \
+  python3 -c 'import json; p = "home/.prettierrc"; c = json.load(open(p)); c["overrides"][0]["excludeFiles"] = ".github/workflows/ci.yml"; open(p, "w").write(json.dumps(c))'
+
+mutate "a brace pattern the check cannot judge is caught" "prettier indents YAML by 2" \
+  python3 -c 'import json; p = "home/.prettierrc"; c = json.load(open(p)); c["overrides"].append({"files": "*.{yml,yaml}", "options": {"tabWidth": 4}}); open(p, "w").write(json.dumps(c))'
+
 # The defect this exists for: the 99 pattern anchored to the repo root again,
 # so nvim started in a subdirectory leaks its scratch files.
 mutate "a root-anchored 99 pattern in the global ignore is caught" "the global ignore covers what it claims" \

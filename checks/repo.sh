@@ -652,17 +652,26 @@ section "Formatters"
 # The width is worked out the way prettier does it, not by finding the
 # override: the top-level value, then every override whose files match, in
 # order, so a later one that sets YAML back to 4 is the one that counts.
-# Patterns are matched as shell globs against the bare name, which errs loud on
-# anything subtler. A .prettierrc written as YAML rather than JSON does not
+# Patterns are matched as shell globs against the bare name, which is how
+# prettier matches a plain one like *.yml. Anything more than letters, digits,
+# _ . - * and ? can match differently there: an override for .github/**/*.yml,
+# one for *.{yml,yaml}, or an excludeFiles naming .github/workflows/ci.yml each
+# had prettier re-indent ci.yml at 4 while this still read 2. So such a
+# pattern, in files or excludeFiles, fails as one this cannot judge rather than
+# being guessed at. A .prettierrc written as YAML rather than JSON does not
 # parse here, and fails as unreadable.
 prettier_width() { # $1 = file name; prints the tabWidth prettier would use
   python3 -c '
-import fnmatch, json, sys
+import fnmatch, json, re, sys
 cfg = json.load(open(sys.argv[1]))
 width = cfg.get("tabWidth", 2)
 def globs(v):
     return [v] if isinstance(v, str) else list(v or [])
 for o in cfg.get("overrides", []):
+    for g in globs(o.get("files")) + globs(o.get("excludeFiles")):
+        if not re.fullmatch(r"[\w.*?-]+", g):
+            print("unjudgeable", g)
+            sys.exit()
     hit = any(fnmatch.fnmatch(sys.argv[2], g) for g in globs(o.get("files")))
     out = any(fnmatch.fnmatch(sys.argv[2], g) for g in globs(o.get("excludeFiles")))
     if hit and not out:
@@ -677,6 +686,8 @@ else
   yaml_w="$(prettier_width ci.yaml)"
   if [ -z "$yml_w" ] || [ -z "$yaml_w" ]; then
     bad "could not read a tabWidth for YAML out of home/.prettierrc — the check would be vacuous"
+  elif [ "${yml_w%% *}" = unjudgeable ]; then
+    bad "home/.prettierrc has an override pattern this check cannot judge (${yml_w#* }) — prettier may match it differently from a glob on the bare name, so a 2 here would prove nothing"
   elif [ "$yml_w" != 2 ] || [ "$yaml_w" != 2 ]; then
     bad "home/.prettierrc gives .yml files a tabWidth of $yml_w and .yaml files $yaml_w — anything but 2 and format-on-save re-indents them"
   else
