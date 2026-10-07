@@ -249,6 +249,14 @@ mutate "a prefix ] that never reads pbpaste is caught" "tmux copies to and paste
 mutate "an untracked lazy-lock.json is caught" "lazy-lock" \
   git rm -q --cached nvim/.config/nvim/lazy-lock.json
 
+# Tracked but unreadable: lazy decodes it under pcall and carries on with no
+# lock at all. A write cut off mid-entry is the shape this takes.
+mutate "a lazy-lock.json that does not parse is caught" "parses the way lazy reads it" \
+  bash -c 'head -c 200 nvim/.config/nvim/lazy-lock.json >lock.tmp && mv lock.tmp nvim/.config/nvim/lazy-lock.json'
+
+mutate "a lazy-lock.json that parses and pins nothing is caught" "parses the way lazy reads it" \
+  bash -c 'printf "{}\n" >nvim/.config/nvim/lazy-lock.json'
+
 mutate "a lua syntax error is caught" "every lua file parses" \
   bash -c 'printf "\nthis is not lua((\n" >> nvim/.config/nvim/lua/rich/plugins/fidget.lua'
 

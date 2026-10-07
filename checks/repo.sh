@@ -160,6 +160,27 @@ else
   bad "lazy-lock.json is not tracked — a fresh machine gets whatever is newest that day"
 fi
 
+# Tracked is not the same as read. lazy loads the lock with a pcall'd
+# vim.json.decode and, when that fails, carries on with an EMPTY lock: no error,
+# no message, and every plugin installed or restored at the tip of its branch
+# instead of the commit written here. A merge-conflict marker or a truncated
+# write is enough. So decode it with the decoder lazy uses, and count what it
+# pins. nvim only, like the parse check above: a machine without nvim has no use
+# for the lock, and CI installs it.
+if command -v nvim >/dev/null 2>&1; then
+  lock_pins="$(printf '%s\n' 'local f = assert(io.open(arg[1]))
+local ok, lock = pcall(vim.json.decode, f:read("*a"))
+io.stdout:write(ok and type(lock) == "table" and tostring(vim.tbl_count(lock)) or "unparsed", "\n")' |
+    nvim --clean --headless -l /dev/stdin nvim/.config/nvim/lazy-lock.json 2>/dev/null)"
+  case "$lock_pins" in
+    '' | *[!0-9]*) bad "lazy-lock.json does not parse — lazy drops it without a word and installs every plugin at the tip of its branch" ;;
+    0) bad "lazy-lock.json parses but pins nothing — every plugin installs at the tip of its branch" ;;
+    *) ok "lazy-lock.json parses the way lazy reads it, and pins $lock_pins plugins" ;;
+  esac
+else
+  meh "nvim not installed, cannot decode lazy-lock.json"
+fi
+
 # Line wrap, and which way round it has to point.
 #
 # This is the one option in options.lua whose value has already been changed by
