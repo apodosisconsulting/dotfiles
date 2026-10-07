@@ -616,6 +616,33 @@ else
 fi
 
 echo
+echo "== a git -c for one command is not the repo's git config going dead =="
+# `git -c core.editor=true commit --amend` is the usual non-interactive amend,
+# and git hands that setting to the pre-commit hook, so to check.sh, through the
+# environment: GIT_CONFIG_PARAMETERS for -c, GIT_CONFIG_COUNT for the same set
+# from outside. It lasts one command and overrides no file, and the comparison
+# of the repo's git config with what git uses called the repo's value dead for
+# it and refused the commit. Driven through a real commit in the copy, so the
+# hook gets the override the way git delivers it rather than the way this file
+# assumes it does. Only meaningful where the machine half passes.
+reset_repo
+full="$(run_check_full)"
+if ! contains "$full" "0 failure(s)" || ! contains "$full" "keys the repo's git config sets"; then
+  printf '  \033[33mSKIP\033[0m  the machine half does not pass here\n'
+else
+  rc=0
+  out="$(cd "$WORK" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=commit.verbose GIT_CONFIG_VALUE_0=false \
+    git -c core.editor=a-one-off-editor commit -q --allow-empty -m probe 2>&1)" || rc=$?
+  # The refusals below pass on silence, so first: the hook ran the comparison.
+  assert "the hook still compares every key the repo's git config sets" \
+    contains "$out" "keys the repo's git config sets are what git actually uses"
+  refute "a git -c override is not reported as the repo's value going dead" \
+    contains "$out" "core.editor: repo says"
+  refute "nor is one passed in GIT_CONFIG_COUNT" contains "$out" "commit.verbose: repo says"
+  assert "and the commit goes through" [ "$rc" -eq 0 ]
+fi
+
+echo
 echo "== check.sh's own exit status =="
 reset_repo
 (cd "$WORK" && ./check.sh --repo-only >/dev/null 2>&1)

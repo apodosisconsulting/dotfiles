@@ -141,6 +141,13 @@ section "Git config"
 # reads ~/.gitconfig ALONE when it exists, never the stowed file, and would call
 # every key the repo sets unset. Read line by line, because a subsection name
 # may hold a space.
+#
+# Files only, not the command line. `git -c core.editor=true commit` hands its
+# settings to the hook that runs this through GIT_CONFIG_PARAMETERS, and
+# GIT_CONFIG_COUNT carries the same from the environment, so a plain lookup
+# here saw a one-off override as the live value, called the repo's dead, and
+# refused the commit. An override for one command kills nothing; a file that
+# sets the key again does, so those two are dropped for the lookup.
 gitconf="$REPO/git/.config/git/config"
 git_keys=0
 git_dead=0
@@ -148,7 +155,7 @@ while IFS= read -r k; do
   [ -n "$k" ] || continue
   git_keys=$((git_keys + 1))
   repo_v="$(git config --file "$gitconf" --get "$k" 2>/dev/null)"
-  live_v="$(git config --get "$k" 2>/dev/null)"
+  live_v="$(env -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT git config --get "$k" 2>/dev/null)"
   if [ "$repo_v" != "$live_v" ]; then
     bad "$k: repo says '$repo_v' but git uses '${live_v:-<unset>}' — the repo's value is dead"
     git_dead=$((git_dead + 1))
