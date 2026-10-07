@@ -13,8 +13,30 @@ return {
             { "nvim-treesitter/nvim-treesitter-textobjects", branch = "master" },
         },
         config = function()
+            -- Say so when setup cannot run. Returning quietly looked like
+            -- nothing was wrong: Neovim's own ftplugins start treesitter
+            -- highlighting for lua, help and query, and everything else falls
+            -- back to regex syntax, so the colours stayed while af, ]m,
+            -- <leader>a and treesitter indent were all gone. The pinned master
+            -- branch is frozen and supports Neovim 0.10 and 0.11 only, so a
+            -- newer Neovim is where this shows first.
             local ok, configs = pcall(require, "nvim-treesitter.configs")
             if not ok then
+                -- First line only: for a missing module the rest is Lua's
+                -- whole search path, one line per place it looked, which at
+                -- startup buries the line that says what is wrong.
+                local reason = tostring(configs):match("^[^\n]*")
+                -- Scheduled, not raised in place. This runs inside the
+                -- BufReadPost that loads the plugin, and an ERROR notify there
+                -- becomes an exception in whatever opened the file: an edit
+                -- run from Lua failed although the file opened, and under a
+                -- pcall -- which is how Telescope opens a file -- the message
+                -- was swallowed and nothing was shown at all. Deferred, it is
+                -- printed either way, even by a headless start that quits
+                -- straight away.
+                vim.schedule(function()
+                    vim.notify("nvim-treesitter did not load: " .. reason, vim.log.levels.ERROR)
+                end)
                 return
             end
 

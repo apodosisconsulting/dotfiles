@@ -373,6 +373,37 @@ format_check json '{"a":1,   "b":2}
 ' prettier
 
 echo
+echo "== treesitter is set up, not just highlighting =="
+# treesitter.lua returns early when nvim-treesitter.configs cannot be required,
+# and until it said so that failure made no sound. Highlighting is the WRONG
+# thing to check, and was measured to be: with setup skipped, a lua buffer
+# still has an active highlighter, because Neovim's own lua ftplugin starts
+# one. What only setup provides is the textobject maps and the indentexpr, so
+# those are what is asserted.
+#
+# Lua is the fixture because Neovim ships its parser, so this does not depend
+# on a parser download. CI installs a newer Neovim than the pinned master
+# branch supports; if this goes red there, that is what a fresh machine gets,
+# and it is not a reason to loosen it.
+#
+# Proven by hand: misspelling the configs module in a copy of the config fails
+# both of the last two, and nvim then prints the error treesitter.lua reports.
+out="$(nv "$SANDBOX/start.lua" \
+  'lua vim.wait(2000, function() return not vim.tbl_isempty(vim.fn.maparg("af", "x", false, true)) end, 50)' \
+  'lua print("TS_FT=" .. vim.bo.filetype .. " TS_AF=" .. (vim.tbl_isempty(vim.fn.maparg("af", "x", false, true)) and "MISSING" or "mapped") .. " TS_INDENT=" .. vim.bo.indentexpr)')"
+assert "the fixture is a lua buffer, which the two below assume" contains "$out" "TS_FT=lua"
+assert "af selects a function: nvim-treesitter's textobjects were set up" \
+  contains "$out" "TS_AF=mapped"
+assert "indent comes from treesitter, not the filetype's own indentexpr" \
+  contains "$out" "TS_INDENT=nvim_treesitter#indent()"
+# Not an assertion; the ones above have already failed. When setup did not run,
+# what nvim printed carries treesitter.lua's reason, which is the next thing
+# anyone will want.
+if ! contains "$out" "TS_AF=mapped" || ! contains "$out" "TS_INDENT=nvim_treesitter#indent()"; then
+  printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+fi
+
+echo
 echo "== the leader mappings resolve to what the config claims =="
 # A lazy `keys` entry that never registers leaves a key that silently does
 # nothing — the plugin is configured, the binding is not there.
