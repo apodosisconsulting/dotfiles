@@ -641,9 +641,19 @@ fi
 #
 # The block ends at the first line that is only `},`, so a multi-line table
 # nested ahead of `args` would end it early; that reads as empty and fails,
-# rather than passing. The definition is counted across the whole lua config
-# too, because a second one -- here or anywhere -- replaces the first, and which
-# is last depends on load order rather than on anything this can read.
+# rather than passing.
+#
+# Nor is conform.lua's block the only place shfmt can be configured. lazy
+# deep-merges the opts of every spec for a plugin, so a second conform spec
+# anywhere in the config that says ["shfmt"] = { append_args = { "-i", "4" } }
+# lands inside this block at runtime: args stay ours, -i 4 goes after them, and
+# a save re-indents to 4 while this block still reads -i 2. A plain assignment
+# replaces the block instead, and either way which wins depends on load order,
+# not on anything this can read. So every definition of shfmt in the lua config
+# is counted -- a bare key, a bracketed one with either quote, an assignment to
+# formatters.shfmt, or to a field of shfmt -- and more than one fails, as does
+# a scan that cannot find conform.lua's own. Inside each, prepend_args and
+# append_args fail too, wherever it is.
 CONFORM="nvim/.config/nvim/lua/rich/plugins/conform.lua"
 lint_shfmt="$(awk '
   /^lint:/ { inside = 1; next }
@@ -658,8 +668,36 @@ lint_shfmt="$(awk '
       print out
     }
   }' Makefile | sort -u)"
-shfmt_defs="$(grep -rnE '(^|[^A-Za-z_."])shfmt[[:space:]]*=[[:space:]]*\{|formatters\.shfmt[[:space:]]*=' \
-  nvim/.config/nvim --include='*.lua' | grep -vE '^[^:]*:[0-9]+:[[:space:]]*--')"
+# The awk follows each definition from where it matches to its closing brace,
+# and reports any prepend_args or append_args on the way. Whole-line comments
+# are skipped and trailing ones cut, since conform.lua's own comment names
+# prepend_args.
+shfmt_def="(^|[^A-Za-z_.\"'])shfmt[[:space:]]*=[[:space:]]*\\{"
+shfmt_def="$shfmt_def|\\[[[:space:]]*[\"']shfmt[\"'][[:space:]]*\\][[:space:]]*=([^=]|\$)"
+shfmt_def="$shfmt_def|formatters\\.shfmt[[:space:]]*=([^=]|\$)"
+shfmt_def="$shfmt_def|(\\.shfmt|\\[[[:space:]]*[\"']shfmt[\"'][[:space:]]*\\])(\\.[A-Za-z_]+|\\[[^]]*\\])+[[:space:]]*=([^=]|\$)"
+# shellcheck disable=SC2016  # $0 is awk's record, not the shell's
+shfmt_scan="$(find nvim/.config/nvim -name '*.lua' | sort |
+  SHFMT_DEF="$shfmt_def" xargs awk '
+    FNR == 1 { depth = 0 }
+    /^[[:space:]]*--/ { next }
+    {
+      line = $0
+      sub(/[[:space:]]--.*$/, "", line)
+      if (depth == 0) {
+        if (!match(line, ENVIRON["SHFMT_DEF"])) next
+        print "def " FILENAME ":" FNR ":" $0
+        line = substr(line, RSTART)
+      }
+      if (line ~ /(prepend|append)_args/) print "extra " FILENAME ":" FNR ":" $0
+      t = line
+      depth += gsub(/\{/, "", t)
+      t = line
+      depth -= gsub(/\}/, "", t)
+      if (depth < 0) depth = 0
+    }')"
+shfmt_defs="$(printf '%s\n' "$shfmt_scan" | sed -n 's/^def //p')"
+shfmt_extra="$(printf '%s\n' "$shfmt_scan" | sed -n 's/^extra //p')"
 shfmt_ndefs="$(printf '%s\n' "$shfmt_defs" | grep -c .)"
 shfmt_block="$(sed -n '/^[[:space:]]*shfmt[[:space:]]*=[[:space:]]*{/,/^[[:space:]]*},/p' "$CONFORM")"
 # shellcheck disable=SC2016  # $FILENAME is conform's placeholder, not the shell's
@@ -667,14 +705,16 @@ conform_shfmt="$(printf '%s\n' "$shfmt_block" |
   grep -E '^[[:space:]]*(prepend_|append_)?args[[:space:]]*=' |
   grep -oE '"[^"]*"' | tr -d '"' |
   grep -vxE -- '-filename|\$FILENAME' | paste -sd' ' -)"
-shfmt_prepend="$(printf '%s\n' "$shfmt_block" | grep -cE '^[[:space:]]*prepend_args[[:space:]]*=')"
-if [ "${shfmt_ndefs:-0}" -gt 1 ]; then
-  bad "conform's shfmt formatter is configured in $shfmt_ndefs places, and whichever loads last wins:"
+if [ -n "$shfmt_extra" ]; then
+  bad "shfmt is given prepend_args or append_args — conform splices those around args from elsewhere (its own end in -i <shiftwidth>), shfmt takes the last -i, so they are not the flags a save runs with:"
+  printf '%s\n' "$shfmt_extra" | sed 's/^/      /'
+elif [ "${shfmt_ndefs:-0}" -gt 1 ]; then
+  bad "conform's shfmt formatter is configured in $shfmt_ndefs places — lazy merges a second spec into the first, an assignment replaces it, and load order decides:"
   printf '%s\n' "$shfmt_defs" | sed 's/^/      /'
+elif [ "${shfmt_defs%%:*}" != "$CONFORM" ]; then
+  bad "the scan for shfmt definitions did not find the one in $CONFORM — it has gone blind, and would count a second one as none"
 elif [ -z "$lint_shfmt" ] || [ -z "$conform_shfmt" ]; then
   bad "could not read shfmt's flags out of the Makefile's lint recipe or $CONFORM's args — the comparison would be vacuous"
-elif [ "${shfmt_prepend:-0}" -gt 0 ]; then
-  bad "$CONFORM gives shfmt prepend_args, and conform appends -i <shiftwidth> after them — the last -i wins, so a save re-indents to 4 and 'make lint' fails"
 elif [ "$lint_shfmt" != "$conform_shfmt" ]; then
   bad "'make lint' runs shfmt $lint_shfmt but format-on-save runs shfmt $conform_shfmt — a script saved in nvim fails lint"
 else

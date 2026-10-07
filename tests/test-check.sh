@@ -454,6 +454,26 @@ mutate "make lint and format-on-save running shfmt differently is caught" "run s
 mutate "a second shfmt definition elsewhere in the lua config is caught" "run shfmt with the same flags" \
   bash -c 'printf "\nrequire(\"conform\").formatters.shfmt = { args = { \"-i\", \"4\" } }\n" >> nvim/.config/nvim/lua/rich/keymaps.lua'
 
+# A second conform spec, which lazy deep-merges into conform.lua's opts: args
+# stay as they were, -i 4 goes after them, and a save re-indents to 4. The
+# bracketed key once hid it from the definition count entirely.
+mutate "a second conform spec merging append_args into shfmt is caught" "run shfmt with the same flags" \
+  bash -c 'printf "%s\n" "return { \"stevearc/conform.nvim\", opts = { formatters = { [\"shfmt\"] = { append_args = { \"-i\", \"4\" } } } } }" > nvim/.config/nvim/lua/rich/plugins/conform_extra.lua'
+
+# The same bracketed key with no extra args at all, so only the count sees it.
+mutate "a second shfmt definition under a bracketed key is caught" "run shfmt with the same flags" \
+  bash -c 'printf "%s\n" "return { \"stevearc/conform.nvim\", opts = { formatters = { [\"shfmt\"] = { args = { \"-i\", \"4\" } } } } }" > nvim/.config/nvim/lua/rich/plugins/conform_extra.lua'
+
+# And the other way lazy lets a spec change opts: a function that edits them.
+mutate "append_args set on shfmt from an opts function is caught" "run shfmt with the same flags" \
+  bash -c 'printf "%s\n" "return {" "    \"stevearc/conform.nvim\"," "    opts = function(_, opts)" "        opts.formatters.shfmt.append_args = { \"-i\", \"4\" }" "    end," "}" > nvim/.config/nvim/lua/rich/plugins/conform_extra.lua'
+
+# A scan that matches nothing would count no second definition anywhere. It
+# has to find conform.lua's own, or fail.
+# shellcheck disable=SC2016  # $shfmt_def is repo.sh's text, edited, not expanded
+mutate "a shfmt definition scan gone blind fails rather than counting none" "run shfmt with the same flags" \
+  sed -i '' 's/SHFMT_DEF="\$shfmt_def" xargs/SHFMT_DEF="x^" xargs/' checks/repo.sh
+
 mutate "unreadable shfmt args fail rather than passing vacuously" "run shfmt with the same flags" \
   sed -i '' '/^ *args = { "-i"/d' nvim/.config/nvim/lua/rich/plugins/conform.lua
 
