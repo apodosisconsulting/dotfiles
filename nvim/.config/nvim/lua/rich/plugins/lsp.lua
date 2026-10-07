@@ -17,17 +17,21 @@ return {
 
     keys = {
         { "<leader>ld", vim.diagnostic.open_float, desc = "Line diagnostics" },
+        -- vim.v.count1, not 1, so 3]d skips to the third diagnostic, as
+        -- Neovim's own ]d does. These replace those to open the float on
+        -- arrival, and a hard-coded count = 1 had made every count move one.
+        -- checks/repo.sh asserts both keep it.
         {
             "[d",
             function()
-                vim.diagnostic.jump({ count = -1, float = true })
+                vim.diagnostic.jump({ count = -vim.v.count1, float = true })
             end,
             desc = "Prev diagnostic",
         },
         {
             "]d",
             function()
-                vim.diagnostic.jump({ count = 1, float = true })
+                vim.diagnostic.jump({ count = vim.v.count1, float = true })
             end,
             desc = "Next diagnostic",
         },

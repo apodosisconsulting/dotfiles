@@ -295,6 +295,35 @@ else
   ok "nvim uses the system clipboard (clipboard=unnamedplus) and nothing in the lua config changes it"
 fi
 
+# A count on ]q [q ]d [d.
+#
+# Neovim's own versions of all four take one: 3]q moves three quickfix entries.
+# This config replaces them -- to centre the line, and to open the diagnostic
+# float -- and the replacements hard-coded one: a bare cnext under <Cmd>, and
+# vim.diagnostic.jump({ count = 1 }). So 3]q moved one entry, and nothing said
+# so, because a count is exactly the thing nobody types while testing a map.
+#
+# Every cnext, cprev and vim.diagnostic.jump in the lua config has to take the
+# count, as v:count1 or vim.v.count1, on the same line. Comment lines are
+# dropped, and so is a trailing comment, so that neither can supply the word.
+# tests/test-nvim.sh presses 3]q and 3]d in a running nvim; this catches the
+# literal coming back.
+navs="$(grep -rnE 'cnext|cprev|vim\.diagnostic\.jump\(' nvim/.config/nvim --include='*.lua' |
+  grep -vE '^[^:]*:[0-9]+:[[:space:]]*--' | sed 's/[[:space:]]--.*$//')"
+navs_next="$(printf '%s\n' "$navs" | grep -c 'cnext')"
+navs_prev="$(printf '%s\n' "$navs" | grep -c 'cprev')"
+navs_jump="$(printf '%s\n' "$navs" | grep -c 'diagnostic\.jump')"
+navs_all="$(printf '%s\n' "$navs" | grep -c .)"
+uncounted="$(printf '%s\n' "$navs" | grep . | grep -vE 'v[:.]count1')"
+if [ "${navs_next:-0}" -eq 0 ] || [ "${navs_prev:-0}" -eq 0 ] || [ "${navs_jump:-0}" -eq 0 ]; then
+  bad "found no cnext, cprev or vim.diagnostic.jump in the lua config — ]q [q ]d [d have moved, and the count check would be vacuous"
+elif [ -n "$uncounted" ]; then
+  bad "quickfix or diagnostic jumps that ignore a count, so 3]q or 3]d moves one:"
+  printf '%s\n' "$uncounted" | sed 's/^/      /'
+else
+  ok "]q [q ]d [d take a count: all $navs_all cnext, cprev and vim.diagnostic.jump calls use v:count1"
+fi
+
 section "tmux config"
 # Anchored to the set-option line, not to any mention: the comment above it
 # explains what usstyle is, so a bare `grep usstyle` stayed green after the

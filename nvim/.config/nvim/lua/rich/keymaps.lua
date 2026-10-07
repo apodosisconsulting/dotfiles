@@ -67,8 +67,22 @@ vim.keymap.set(
 )
 
 -- Quickfix list navigation
-vim.keymap.set("n", "]q", "<cmd>cnext<cr>zz", { silent = true, desc = "Next quickfix item" })
-vim.keymap.set("n", "[q", "<cmd>cprev<cr>zz", { silent = true, desc = "Prev quickfix item" })
+--
+-- v:count1 so 3]q moves three entries, as Neovim's own ]q does. <Cmd> leaves
+-- the count in v:count1 rather than passing it to the command, so a bare
+-- cnext always moved one. checks/repo.sh asserts both keep it.
+vim.keymap.set(
+    "n",
+    "]q",
+    "<cmd>exe v:count1 .. 'cnext'<cr>zz",
+    { silent = true, desc = "Next quickfix item" }
+)
+vim.keymap.set(
+    "n",
+    "[q",
+    "<cmd>exe v:count1 .. 'cprev'<cr>zz",
+    { silent = true, desc = "Prev quickfix item" }
+)
 
 -- Disable Q (ex mode is never useful, easy to hit accidentally)
 vim.keymap.set("n", "Q", "<nop>")

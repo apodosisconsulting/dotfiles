@@ -514,6 +514,82 @@ for mode in n v; do
 done
 
 echo
+echo "== a count reaches ]q [q ]d [d =="
+# Neovim's own versions of these four take a count; this config replaces them,
+# and the replacements used to throw it away: 3]q moved one entry, and so did
+# 3]d. Seven quickfix entries and seven diagnostics, one per line, and each
+# jump of three from an end has to land on the fourth. The maps are checked to
+# be this config's first, because Neovim's defaults honour a count too -- with
+# the overrides gone, every count assertion would pass on the defaults.
+#
+# A plain ]q is asserted as well: v:count1 is 1 with no count typed, and a
+# v:count there would have been 0 -- which cnext rejects.
+cat >"$SANDBOX/count_probe.lua" <<'LUA'
+local buf = vim.api.nvim_get_current_buf()
+local out = {}
+local function desc(lhs)
+  local m = vim.fn.maparg(lhs, "n", false, true)
+  return (m and m.desc or "none"):gsub(" ", "_")
+end
+out[#out + 1] = "MAP_NQ=" .. desc("]q") .. " MAP_ND=" .. desc("]d")
+local items = {}
+for i = 1, 7 do
+  items[#items + 1] = { bufnr = buf, lnum = i, col = 1, text = "entry " .. i }
+end
+vim.fn.setqflist(items)
+vim.cmd("cfirst")
+vim.api.nvim_feedkeys("3]q", "x", false)
+out[#out + 1] = "QF_NEXT=" .. vim.fn.getqflist({ idx = 0 }).idx
+out[#out + 1] = "QF_NEXT_LINE=" .. vim.api.nvim_win_get_cursor(0)[1]
+vim.api.nvim_feedkeys("]q", "x", false)
+out[#out + 1] = "QF_PLAIN=" .. vim.fn.getqflist({ idx = 0 }).idx
+vim.cmd("clast")
+vim.api.nvim_feedkeys("3[q", "x", false)
+out[#out + 1] = "QF_PREV=" .. vim.fn.getqflist({ idx = 0 }).idx
+local ns = vim.api.nvim_create_namespace("count_probe")
+local diags = {}
+for i = 0, 6 do
+  diags[#diags + 1] = { lnum = i, col = 0, message = "d" .. i, severity = vim.diagnostic.severity.WARN }
+end
+vim.diagnostic.set(ns, buf, diags)
+out[#out + 1] = "DIAGS=" .. #vim.diagnostic.get(buf)
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+vim.api.nvim_feedkeys("3]d", "x", false)
+out[#out + 1] = "D_NEXT=" .. vim.api.nvim_win_get_cursor(0)[1]
+vim.api.nvim_win_set_cursor(0, { 7, 0 })
+vim.api.nvim_feedkeys("3[d", "x", false)
+out[#out + 1] = "D_PREV=" .. vim.api.nvim_win_get_cursor(0)[1]
+print(table.concat(out, " "))
+LUA
+printf 'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n' >"$SANDBOX/count.txt"
+out="$(nv "$SANDBOX/count.txt" 'lua vim.wait(1500)' "luafile $SANDBOX/count_probe.lua")"
+# Each figure defaults to 0, which no assertion below accepts.
+count_fig() { printf '%s' "$out" | sed -n "s/.*$1=\([0-9]*\).*/\1/p" | head -1; }
+qf_next="$(count_fig QF_NEXT)"
+qf_next_line="$(count_fig QF_NEXT_LINE)"
+qf_plain="$(count_fig QF_PLAIN)"
+qf_prev="$(count_fig QF_PREV)"
+diag_n="$(count_fig DIAGS)"
+d_next="$(count_fig D_NEXT)"
+d_prev="$(count_fig D_PREV)"
+printf '    3]q -> entry %s, then ]q -> %s; 3[q from 7 -> %s; 3]d -> line %s; 3[d from 7 -> line %s\n' \
+  "${qf_next:-0}" "${qf_plain:-0}" "${qf_prev:-0}" "${d_next:-0}" "${d_prev:-0}"
+assert "]q and ]d are this config's maps, not Neovim's defaults (guards a vacuous pass)" \
+  contains "$out" "MAP_NQ=Next_quickfix_item MAP_ND=Next_diagnostic"
+assert "the seven diagnostics to jump between are there" [ "${diag_n:-0}" -eq 7 ]
+assert "3]q from the first entry lands on the fourth" [ "${qf_next:-0}" -eq 4 ]
+# Entry N is on line N. The two defaults differ so that neither figure being
+# missing can make them equal.
+assert "...on that entry's line, so zz did not take the count as well" \
+  [ "${qf_next_line:-0}" -eq "${qf_next:--1}" ]
+plain_step=0
+[ "${qf_next:-0}" -ge 1 ] && plain_step=$((${qf_plain:-0} - qf_next))
+assert "a plain ]q after it still moves one entry" [ "$plain_step" -eq 1 ]
+assert "3[q from the last entry lands on the fourth" [ "${qf_prev:-0}" -eq 4 ]
+assert "3]d from line 1 lands on the fourth diagnostic" [ "${d_next:-0}" -eq 4 ]
+assert "3[d from line 7 lands on the fourth diagnostic" [ "${d_prev:-0}" -eq 4 ]
+
+echo
 echo "== one clipboard: yank, paste and delete all go through the system's =="
 # What options.lua and keymaps.lua claim, checked by doing it: yy has to land
 # on pbcopy, p has to read pbpaste, and the two void-register maps have to

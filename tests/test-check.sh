@@ -312,6 +312,21 @@ mutate "the clipboard changed again elsewhere in the lua config is caught" "nvim
 mutate "an unreadable clipboard setting fails rather than passing vacuously" "nvim uses the system clipboard" \
   sed -i '' '/^vim\.opt\.clipboard/d' nvim/.config/nvim/lua/rich/options.lua
 
+# The defect this exists for, replayed on each half: ]q back to a bare cnext,
+# and ]d back to a hard-coded count of one.
+mutate "a ]q that ignores its count is caught" "take a count" \
+  sed -i '' "s/<cmd>exe v:count1 .. 'cnext'<cr>zz/<cmd>cnext<cr>zz/" nvim/.config/nvim/lua/rich/keymaps.lua
+
+mutate "a ]d with a hard-coded count is caught" "take a count" \
+  sed -i '' 's/count = vim\.v\.count1,/count = 1,/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
+
+# A trailing comment is not code, and must not lend the line its v:count1.
+mutate "a count named only in a trailing comment is caught" "take a count" \
+  sed -i '' "s/\"<cmd>exe v:count1 .. 'cprev'<cr>zz\",/\"<cmd>cprev<cr>zz\", -- v:count1/" nvim/.config/nvim/lua/rich/keymaps.lua
+
+mutate "no diagnostic jump to read fails rather than passing vacuously" "take a count" \
+  sed -i '' 's/vim\.diagnostic\.jump(/vim.diagnostic.goto(/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
+
 mutate_machine "a tmux.conf path that does not exist is caught" "every path the configs hardcode" \
   sed -i '' 's|~/.local/bin/tmux-clear-scrollback|~/.local/bin/does-not-exist|' tmux/.config/tmux/tmux.conf
 
