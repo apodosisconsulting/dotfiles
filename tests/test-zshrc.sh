@@ -163,17 +163,51 @@ else
   # brew's output did not survive that: .zshrc puts ~/.local/bin ahead of
   # brew's bin, so its early return never fired in a nested shell, and each one
   # added another copy of its fpath and INFOPATH entries. The block must not.
-  nested() { # $1 = the typeset -U line to run first
-    env -i HOME="$TEST_TMP" "$clean" MANPATH=/a:/b zsh -f -c \
-      "$1; source $BLOCK; zsh -f -c '$1; source $BLOCK; $dump'"
+  #
+  # So each shell runs the block AND the line after it that puts ~/.local/bin
+  # first, read out of .zshrc in its own order. With the block alone, PATH in
+  # the nested shell still starts with brew's bin and sbin, brew's early return
+  # fires there, and the `brew shellenv` this block replaced passed the
+  # comparison while real nested shells duplicated.
+  upto_local_bin() { # $1 = a pattern for the .zshrc line to start at
+    awk -v start="$1" '$0 ~ start { on = 1 } on { print }
+      on && /^[^#]*\.local\/bin/ { exit }' "$ZSHRC"
   }
-  once="$(env -i HOME="$TEST_TMP" "$clean" MANPATH=/a:/b zsh -f -c "$preamble; source $BLOCK; $dump")"
+  TOP="$TEST_TMP/brew-top.zsh"
+  upto_local_bin '^# Homebrew' >"$TOP"
+  assert "the block can be read out with the ~/.local/bin line that follows it" \
+    contains "$(tail -n 1 "$TOP")" '/.local/bin:'
+  run_once() { # $1 = the typeset -U line to run first, $2 = the file to source
+    env -i HOME="$TEST_TMP" "$clean" MANPATH=/a:/b zsh -f -c "$1; source $2; $dump"
+  }
+  nested() { # the same, run in a shell that ran it first
+    env -i HOME="$TEST_TMP" "$clean" MANPATH=/a:/b zsh -f -c \
+      "$1; source $2; zsh -f -c '$1; source $2; $dump'"
+  }
+  once="$(run_once "$preamble" "$TOP")"
   assert "a shell nested in one that ran the block ends up with the same environment" \
-    [ "$once" = "$(nested "$preamble")" ]
-  # And the negative control for that: without fpath in the typeset -U line,
-  # the nested shell gains a second copy of brew's site-functions.
-  refute "...which it does not without fpath in the typeset -U line" \
-    [ "$once" = "$(nested "typeset -U path PATH")" ]
+    [ "$once" = "$(nested "$preamble" "$TOP")" ]
+  # The negative controls for that, each naming the copy it expects. Without
+  # fpath in the typeset -U line, a second copy of brew's site-functions.
+  site="$prefix/share/zsh/site-functions"
+  assert "...but not without fpath in the typeset -U line: site-functions twice" \
+    contains "$(nested "typeset -U path PATH" "$TOP")" "fpath=( $site $site "
+  # And with brew shellenv run in the block's place, as .zshrc did, a second
+  # copy of brew's INFOPATH entry, which a shell run once does not have. Named
+  # rather than compared whole, so it holds whatever the typeset -U line says.
+  OLD="$TEST_TMP/brew-top-eval.zsh"
+  {
+    # shellcheck disable=SC2016  # zsh code, written into the file
+    printf 'eval "$(%s shellenv zsh)"\n' "$brew_bin"
+    upto_local_bin '^# Local scripts'
+  } >"$OLD"
+  info="$prefix/share/info:"
+  old_once="$(run_once "$preamble" "$OLD")"
+  assert "with brew shellenv in the block's place, a shell run once has brew's INFOPATH entry" \
+    contains "$old_once" "INFOPATH=$info"
+  refute "...only once" contains "$old_once" "INFOPATH=$info$info"
+  assert "...and a nested one has it twice, so the nested comparison can fail" \
+    contains "$(nested "$preamble" "$OLD")" "INFOPATH=$info$info"
 fi
 
 # The whole file, run as a terminal runs it, in a scratch HOME: with ZDOTDIR
