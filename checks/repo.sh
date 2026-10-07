@@ -616,6 +616,49 @@ else
   ok "every git_status symbol ends in a space ($gs_seen of them), so none runs into the next module"
 fi
 
+section "Formatters"
+# home/.prettierrc is stowed to ~, so it is the prettier config for every repo
+# under ~ that has none of its own, and format-on-save applies it. Its tabWidth
+# is 4, which re-indented every YAML file on save, this repo's CI workflow
+# included, so an override takes YAML back to 2. `make lint` proves that
+# against the YAML here, but only where prettier is installed; this needs
+# nothing but python3.
+#
+# The width is worked out the way prettier does it, not by finding the
+# override: the top-level value, then every override whose files match, in
+# order, so a later one that sets YAML back to 4 is the one that counts.
+# Patterns are matched as shell globs against the bare name, which errs loud on
+# anything subtler. A .prettierrc written as YAML rather than JSON does not
+# parse here, and fails as unreadable.
+prettier_width() { # $1 = file name; prints the tabWidth prettier would use
+  python3 -c '
+import fnmatch, json, sys
+cfg = json.load(open(sys.argv[1]))
+width = cfg.get("tabWidth", 2)
+def globs(v):
+    return [v] if isinstance(v, str) else list(v or [])
+for o in cfg.get("overrides", []):
+    hit = any(fnmatch.fnmatch(sys.argv[2], g) for g in globs(o.get("files")))
+    out = any(fnmatch.fnmatch(sys.argv[2], g) for g in globs(o.get("excludeFiles")))
+    if hit and not out:
+        width = o.get("options", {}).get("tabWidth", width)
+print(width)
+' home/.prettierrc "$1" 2>/dev/null
+}
+if ! command -v python3 >/dev/null 2>&1; then
+  meh "python3 not installed, cannot read home/.prettierrc"
+else
+  yml_w="$(prettier_width ci.yml)"
+  yaml_w="$(prettier_width ci.yaml)"
+  if [ -z "$yml_w" ] || [ -z "$yaml_w" ]; then
+    bad "could not read a tabWidth for YAML out of home/.prettierrc — the check would be vacuous"
+  elif [ "$yml_w" != 2 ] || [ "$yaml_w" != 2 ]; then
+    bad "home/.prettierrc gives .yml files a tabWidth of $yml_w and .yaml files $yaml_w — anything but 2 and format-on-save re-indents them"
+  else
+    ok "prettier indents YAML by 2 under home/.prettierrc, whatever its top-level tabWidth"
+  fi
+fi
+
 section "Make targets"
 # A target listed in .PHONY but with no recipe does not error — make prints
 # "Nothing to be done" and exits 0. `make test` did exactly that after a careless

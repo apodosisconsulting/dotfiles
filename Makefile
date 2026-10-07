@@ -18,7 +18,7 @@ help:
 	@echo "  make doctor     - print useful debug info (PATH, tool locations)"
 	@echo "  make test       - run the test suites in tests/"
 	@echo "  make test-fast  - skip the suites that drive a terminal (seconds, not minutes)"
-	@echo "  make lint       - shellcheck and shfmt every shell script, stylua every lua file"
+	@echo "  make lint       - shell (shellcheck, shfmt), lua (stylua), YAML and README (prettier)"
 	@echo "  make hooks      - install the git hooks (check on commit, test-fast on push)"
 	@echo "  make tidy       - report cruft that has accumulated (deletes nothing)"
 	@echo "  make tidy-apply - actually clean up what 'tidy' reported"
@@ -73,6 +73,13 @@ test-fast:
 # diff. --config-path is explicit because bare stylua does not search parent
 # directories for its config and CI has no ~/.stylua.toml: without the flag it
 # falls back to tabs and reports nearly every file here.
+#
+# prettier over the tracked YAML and README.md, with home/.prettierrc named for
+# the same reason: CI has no ~/.prettierrc, and a checkout anywhere else under
+# ~ would find the stowed one rather than its own. With no config prettier
+# judges by its defaults, not by what format-on-save applies, so losing the
+# YAML override would go unnoticed. GOAL.md is left out so notes in progress
+# never block lint, and JSON because lazy.nvim writes lazy-lock.json itself.
 lint:
 	@set -euo pipefail; \
 	files="$$(git ls-files -z | xargs -0 awk 'FNR == 1 && /^#!.*(ba)?sh$$/ { print FILENAME }')"; \
@@ -83,6 +90,8 @@ lint:
 	shfmt -i 2 -ci -d $$files; \
 	echo "==> stylua"; \
 	git ls-files -z '*.lua' | xargs -0 stylua --check --config-path home/.stylua.toml; \
+	echo "==> prettier"; \
+	git ls-files -z '*.yml' '*.yaml' README.md | xargs -0 prettier --check --config home/.prettierrc; \
 	echo "==> clean"
 
 # Local to this repo, not global: core.hooksPath in the stowed git config would

@@ -342,6 +342,19 @@ mutate "a git_status symbol with no trailing space is caught" "every git_status 
 mutate "an unreadable [git_status] table fails rather than passing vacuously" "every git_status symbol ends in a space" \
   sed -i '' 's/^\[git_status\]$/[git_state]/' starship/.config/starship.toml
 
+# The defect this exists for: no override, so YAML gets the top-level 4 and
+# every save re-indents it. Rewritten through json, not sed, so the file still
+# parses and it is the width that fails rather than the read.
+mutate "YAML left at .prettierrc's top-level tabWidth is caught" "prettier indents YAML by 2" \
+  python3 -c 'import json; p = "home/.prettierrc"; c = json.load(open(p)); del c["overrides"]; open(p, "w").write(json.dumps(c))'
+
+# Prettier applies overrides in order, so a later one is the one that counts.
+mutate "a later override setting YAML back to 4 is caught" "prettier indents YAML by 2" \
+  python3 -c 'import json; p = "home/.prettierrc"; c = json.load(open(p)); c["overrides"].append({"files": "*.yml", "options": {"tabWidth": 4}}); open(p, "w").write(json.dumps(c))'
+
+mutate "an unreadable home/.prettierrc fails rather than passing vacuously" "prettier indents YAML by 2" \
+  bash -c 'printf "not json\n" >> home/.prettierrc'
+
 mutate_machine "a missing git hook is caught" "hooks installed" \
   rm -f .githooks/pre-commit
 
