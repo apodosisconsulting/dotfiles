@@ -27,13 +27,18 @@ format = " [$symbol$branch]($style)"
 [git_status]
 style = "yellow"
 format = " [$all_status$ahead_behind]($style)"
+# Every symbol ends in a space. The format above has no trailing separator and
+# the modules after this one begin with a word ("via", "took"), so the last
+# symbol drawn is the only gap between them: ahead was a bare "⇡" and a branch
+# ahead of its upstream read "⇡took 5s". checks/repo.sh asserts it for every
+# symbol in this table.
 conflicted = " "
 modified = " "
 staged = " "
 untracked = " "
 deleted = "✖ "
-ahead = "⇡"
-behind = "⇣"
-diverged = "⇕"
+ahead = "⇡ "
+behind = "⇣ "
+diverged = "⇕ "
 stashed = " "
 

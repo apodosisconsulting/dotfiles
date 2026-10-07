@@ -334,6 +334,14 @@ mutate "a pipeline into a quiet grep under pipefail is caught" "quiet grep" \
 mutate "tests/lib.sh gaining set -e is caught" "does not set -e" \
   sed -i '' 's/^set -uo pipefail/set -euo pipefail/' tests/lib.sh
 
+# The defect this exists for: a bare ahead arrow, so the prompt read
+# "⇡took 5s".
+mutate "a git_status symbol with no trailing space is caught" "every git_status symbol ends in a space" \
+  sed -i '' 's/^ahead = "\(.*\) "$/ahead = "\1"/' starship/.config/starship.toml
+
+mutate "an unreadable [git_status] table fails rather than passing vacuously" "every git_status symbol ends in a space" \
+  sed -i '' 's/^\[git_status\]$/[git_state]/' starship/.config/starship.toml
+
 mutate_machine "a missing git hook is caught" "hooks installed" \
   rm -f .githooks/pre-commit
 

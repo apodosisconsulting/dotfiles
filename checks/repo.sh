@@ -588,6 +588,34 @@ else
   ok "tests/lib.sh does not set -e, so assertions report rather than abort"
 fi
 
+section "Prompt"
+# The git_status symbols are the only space between that module and the next.
+# Its format has no trailing separator, and every module that can follow it
+# begins with a word ("via 🐍", "took 5s"), so a symbol with no trailing space
+# runs straight into it. Three did: ahead was a bare "⇡", and for as long as a
+# branch was ahead of its upstream the prompt read "⇡took 5s". Nothing failed
+# and nothing looked broken, only cramped.
+#
+# Every key in the table bar the settings, not the three that were wrong: any
+# symbol can be the last one drawn, and one added later is covered too. TOML
+# rejects a key set twice, so there is no later write to miss. A symbol set to
+# "" draws nothing and needs no gap; a single-quoted one, or any other
+# spelling, is reported, which errs loud.
+gs_syms="$(awk '/^\[git_status\][[:space:]]*(#.*)?$/ { p = 1; next } /^\[/ { p = 0 } p' \
+  starship/.config/starship.toml |
+  grep -E '^[[:space:]]*[a-z_]+[[:space:]]*=' |
+  grep -vE '^[[:space:]]*(style|format|disabled|ignore_submodules|windows_starship|use_git_executable)[[:space:]]*=')"
+gs_seen="$(printf '%s\n' "$gs_syms" | grep -c '=')"
+gs_bad="$(printf '%s\n' "$gs_syms" | grep '=' | grep -vE '=[[:space:]]*"([^"]* )?"[[:space:]]*(#.*)?$')"
+if [ "${gs_seen:-0}" -eq 0 ]; then
+  bad "read no symbols out of starship.toml's [git_status] table — the check would be vacuous"
+elif [ -n "$gs_bad" ]; then
+  bad "git_status symbol(s) with no trailing space, so they run into the next module (\"⇡took 5s\"):"
+  printf '%s\n' "$gs_bad" | sed 's/^/      /'
+else
+  ok "every git_status symbol ends in a space ($gs_seen of them), so none runs into the next module"
+fi
+
 section "Make targets"
 # A target listed in .PHONY but with no recipe does not error — make prints
 # "Nothing to be done" and exits 0. `make test` did exactly that after a careless
