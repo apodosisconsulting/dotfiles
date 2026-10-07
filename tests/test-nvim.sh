@@ -36,7 +36,12 @@ SUITE_SLOW=1
 
 command -v nvim >/dev/null 2>&1 || skip_suite "nvim is not installed"
 
-NVIM_CONFIG="$HOME/.config/nvim"
+# Where nvim will look, not where the stow tree is: stdpath("config") follows
+# XDG_CONFIG_HOME, which is how this suite is pointed at a worktree's config
+# instead of the stowed one. The negative control below copies this directory,
+# and with $HOME/.config/nvim written here it broke a copy of the main
+# checkout's config while every other check tested the worktree's.
+NVIM_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
 [ -f "$NVIM_CONFIG/init.lua" ] || skip_suite "no nvim config at $NVIM_CONFIG"
 
 STATE="$TEST_TMP/state"
@@ -83,15 +88,28 @@ nv() { # $1 = file, $2... = -c commands
 
 echo "== it starts, and starts clean =="
 printf 'local x = 1\n' >"$SANDBOX/start.lua"
-# The negative control first. "No errors" is an assertion about EMPTY output,
-# and empty is also what a probe that never ran produces -- which is exactly
-# how this check passed while nv() was failing before it reached nvim. So the
-# same call, with no -c commands, against a copy of the config that throws at
-# the end of init.lua, has to come back with that error in it. If it does not,
-# the clean result below proves nothing. XDG_DATA_HOME is left alone, so the
-# copy finds the installed plugins and lazy clones nothing. cp's complaints are
-# dropped: a live config can hold a dangling link an old stow left behind, which
-# nvim never opens and the control does not need.
+# The negative control copies NVIM_CONFIG, so before it: that is the config
+# nvim loads.
+out="$(nv "$SANDBOX/start.lua" 'lua print("CONFIG=[" .. vim.fn.stdpath("config") .. "]")')"
+assert "the config the control copies is the one nvim loads ($NVIM_CONFIG)" \
+  contains "$out" "CONFIG=[$NVIM_CONFIG]"
+# Then the negative control, ahead of the check it guards. "No errors" is an
+# assertion about EMPTY output, and empty is also what a probe that never ran
+# produces -- which is exactly how this check passed while nv() was failing
+# before it reached nvim. So the same call, with no -c commands, against a copy
+# of the config that throws at the end of init.lua, has to come back with that
+# error in it. If it does not, the clean result below proves nothing.
+#
+# What it shows is that nv() reaches nvim with no -c commands and that an
+# error thrown by init.lua reaches the captured output. Not that every startup
+# error does: init.lua has returned before any plugin that waits for
+# BufReadPre, BufReadPost or VeryLazy has run its config, so the throw comes
+# before them, and an error from one of those is outside what this proves.
+#
+# XDG_DATA_HOME is left alone, so the copy finds the installed plugins and lazy
+# clones nothing. cp's complaints are dropped: a live config can hold a
+# dangling link an old stow left behind, which nvim never opens and the control
+# does not need.
 BROKEN="$TEST_TMP/broken-config"
 mkdir -p "$BROKEN"
 cp -RL "$NVIM_CONFIG" "$BROKEN/nvim" 2>/dev/null
