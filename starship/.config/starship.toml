@@ -10,9 +10,14 @@ style = "cyan"
 truncate_to_repo = false
 truncation_length = 5
 
+# Substitutions are plain substring replacements over the whole path, not
+# matches on whole directory names. A "code" key drew ~/.vscode as
+# ~/.vs<icon> and ~/.codex as ~/.<icon> x, and no directory in ~ is named
+# code, so it went. The keys left can misfire the same way (a .configurator
+# reads <icon>urator); add one only if it is unlikely to turn up inside
+# another name.
 [directory.substitutions]
 "~" = " "
-"code" = "󰏖 "
 "Documents" = "󰈙 "
 "Downloads" = "󰉍 "
 ".config" = " "
