@@ -601,19 +601,44 @@ section "Prompt"
 # rejects a key set twice, so there is no later write to miss. A symbol set to
 # "" draws nothing and needs no gap; a single-quoted one, or any other
 # spelling, is reported, which errs loud.
+#
+# And every symbol starship draws must be in the table, because one left out
+# gets starship's default, which this cannot read. Reading only the keys
+# written here passed while renamed's default, a bare "»", made a branch whose
+# only change was a staged rename read "»took 5s". The list is the symbol keys
+# `starship print-config git_status` names in 1.24, which needs starship, and
+# CI has none; checks/machine.sh asks the installed starship instead, so a
+# symbol a later release adds is caught there.
+GS_SYMBOLS="conflicted ahead behind diverged up_to_date untracked stashed
+  modified staged renamed deleted typechanged"
 gs_syms="$(awk '/^\[git_status\][[:space:]]*(#.*)?$/ { p = 1; next } /^\[/ { p = 0 } p' \
   starship/.config/starship.toml |
   grep -E '^[[:space:]]*[a-z_]+[[:space:]]*=' |
   grep -vE '^[[:space:]]*(style|format|disabled|ignore_submodules|windows_starship|use_git_executable)[[:space:]]*=')"
 gs_seen="$(printf '%s\n' "$gs_syms" | grep -c '=')"
 gs_bad="$(printf '%s\n' "$gs_syms" | grep '=' | grep -vE '=[[:space:]]*"([^"]* )?"[[:space:]]*(#.*)?$')"
+# Space-padded, so a case pattern matches whole keys: "staged" is not found
+# inside a hypothetical "unstaged".
+gs_keys=" $(printf '%s\n' "$gs_syms" | sed -nE 's/^[[:space:]]*([a-z_]+)[[:space:]]*=.*/\1/p' | tr '\n' ' ')"
+gs_unset=""
+for k in $GS_SYMBOLS; do
+  case "$gs_keys" in
+    *" $k "*) ;;
+    *) gs_unset="$gs_unset $k" ;;
+  esac
+done
 if [ "${gs_seen:-0}" -eq 0 ]; then
   bad "read no symbols out of starship.toml's [git_status] table — the check would be vacuous"
-elif [ -n "$gs_bad" ]; then
-  bad "git_status symbol(s) with no trailing space, so they run into the next module (\"⇡took 5s\"):"
-  printf '%s\n' "$gs_bad" | sed 's/^/      /'
+elif [ -n "$gs_bad" ] || [ -n "$gs_unset" ]; then
+  if [ -n "$gs_unset" ]; then
+    bad "git_status symbol(s) not set in starship.toml, so starship draws its default, which can lack the space (renamed's is \"»\"):$gs_unset"
+  fi
+  if [ -n "$gs_bad" ]; then
+    bad "git_status symbol(s) with no trailing space, so they run into the next module (\"⇡took 5s\"):"
+    printf '%s\n' "$gs_bad" | sed 's/^/      /'
+  fi
 else
-  ok "every git_status symbol ends in a space ($gs_seen of them), so none runs into the next module"
+  ok "every git_status symbol ends in a space ($gs_seen of them, none left to starship's default), so none runs into the next module"
 fi
 
 section "Formatters"

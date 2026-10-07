@@ -35,15 +35,20 @@ format = " [$all_status$ahead_behind]($style)"
 # Every symbol ends in a space. The format above has no trailing separator and
 # the modules after this one begin with a word ("via", "took"), so the last
 # symbol drawn is the only gap between them: ahead was a bare "⇡" and a branch
-# ahead of its upstream read "⇡took 5s". checks/repo.sh asserts it for every
-# symbol in this table.
+# ahead of its upstream read "⇡took 5s". All twelve are set, the two that draw
+# nothing included, because one left out gets starship's default: renamed's is
+# a bare "»", and a branch whose only change was a staged rename read
+# "»took 5s". checks/repo.sh asserts both, and checks/machine.sh asks starship.
 conflicted = " "
 modified = " "
 staged = " "
 untracked = " "
 deleted = "✖ "
+renamed = "» "
+typechanged = ""
 ahead = "⇡ "
 behind = "⇣ "
 diverged = "⇕ "
+up_to_date = ""
 stashed = " "
 

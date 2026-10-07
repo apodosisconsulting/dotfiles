@@ -342,6 +342,15 @@ mutate "a git_status symbol with no trailing space is caught" "every git_status 
 mutate "an unreadable [git_status] table fails rather than passing vacuously" "every git_status symbol ends in a space" \
   sed -i '' 's/^\[git_status\]$/[git_state]/' starship/.config/starship.toml
 
+# The one the first fix missed: renamed not set at all, so starship drew its
+# default, a bare "»", and a staged rename read "»took 5s". Once from the list
+# repo.sh keeps, once from starship itself, which fills in the default.
+mutate "a git_status symbol left to starship's default is caught" "every git_status symbol ends in a space" \
+  sed -i '' '/^renamed = /d' starship/.config/starship.toml
+
+mutate_machine "a bare default starship draws for an unset symbol is caught" "starship draws every git_status symbol" \
+  sed -i '' '/^renamed = /d' starship/.config/starship.toml
+
 # The defect this exists for: no override, so YAML gets the top-level 4 and
 # every save re-indents it. Rewritten through json, not sed, so the file still
 # parses and it is the width that fails rather than the read.

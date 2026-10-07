@@ -193,6 +193,27 @@ done
 
 if command -v starship >/dev/null 2>&1; then
   if starship print-config >/dev/null 2>&1; then ok "starship config parses"; else bad "starship config does not parse"; fi
+
+  # repo.sh holds every git_status symbol to a trailing space, but only the
+  # ones it lists, because a symbol starship.toml leaves out is drawn with
+  # starship's default and CI has no starship to ask. Here there is one. Its
+  # print-config fills in every default, so a symbol a later release adds,
+  # with a default as bare as renamed's "»" was, shows up here even though
+  # repo.sh's list has never heard of it. STARSHIP_CONFIG names the repo's own
+  # file, so this judges what is being committed, not what is stowed.
+  gs_drawn="$(STARSHIP_CONFIG="$REPO/starship/.config/starship.toml" starship print-config git_status 2>/dev/null |
+    grep -E '^[a-z_]+ = ' |
+    grep -vE '^(style|format|disabled|ignore_submodules|windows_starship|use_git_executable) = ')"
+  gs_drawn_n="$(printf '%s\n' "$gs_drawn" | grep -c ' = ')"
+  gs_drawn_bad="$(printf '%s\n' "$gs_drawn" | grep ' = ' | grep -vE ' = "([^"]* )?"$')"
+  if [ "${gs_drawn_n:-0}" -eq 0 ]; then
+    bad "starship print-config git_status gave no symbols to judge — the check would be vacuous"
+  elif [ -n "$gs_drawn_bad" ]; then
+    bad "starship draws git_status symbol(s) with no trailing space, defaults included:"
+    printf '%s\n' "$gs_drawn_bad" | sed 's/^/      /'
+  else
+    ok "starship draws every git_status symbol with a trailing space, its defaults included ($gs_drawn_n of them)"
+  fi
 fi
 
 section "Automation"
