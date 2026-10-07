@@ -538,6 +538,59 @@ elif [ "$quoted_bad" -eq 0 ]; then
   ok "every tmux.conf line a comment quotes ($quoted_seen of them) is really in tmux.conf"
 fi
 
+# shfmt's flags are written twice: once in the Makefile's lint recipe, once in
+# conform.lua for format-on-save. If they differ, saving a script in nvim and
+# linting it disagree, and the file you just saved fails `make lint`.
+#
+# They did differ, without either copy changing: conform.lua passed its flags
+# as prepend_args, and conform's own shfmt args append `-i <shiftwidth>` after
+# them whenever no .editorconfig is found. shfmt takes the last -i, shiftwidth
+# is 4, so every save re-indented to 4 while both files read `-i 2 -ci`. That
+# is why prepend_args is rejected outright rather than compared: the strings in
+# it are not the flags shfmt ends up with.
+#
+# The block ends at the first line that is only `},`, so a multi-line table
+# nested ahead of `args` would end it early; that reads as empty and fails,
+# rather than passing. The definition is counted across the whole lua config
+# too, because a second one -- here or anywhere -- replaces the first, and which
+# is last depends on load order rather than on anything this can read.
+CONFORM="nvim/.config/nvim/lua/rich/plugins/conform.lua"
+lint_shfmt="$(awk '
+  /^lint:/ { inside = 1; next }
+  inside && !/^\t/ { inside = 0 }
+  inside {
+    for (i = 1; i <= NF; i++) {
+      if ($i != "shfmt") continue
+      out = ""
+      for (j = i + 1; j <= NF && $j !~ /^\$/; j++) {
+        if ($j != "-d") out = out (out == "" ? "" : " ") $j
+      }
+      print out
+    }
+  }' Makefile | sort -u)"
+shfmt_defs="$(grep -rnE '(^|[^A-Za-z_."])shfmt[[:space:]]*=[[:space:]]*\{|formatters\.shfmt[[:space:]]*=' \
+  nvim/.config/nvim --include='*.lua' | grep -vE '^[^:]*:[0-9]+:[[:space:]]*--')"
+shfmt_ndefs="$(printf '%s\n' "$shfmt_defs" | grep -c .)"
+shfmt_block="$(sed -n '/^[[:space:]]*shfmt[[:space:]]*=[[:space:]]*{/,/^[[:space:]]*},/p' "$CONFORM")"
+# shellcheck disable=SC2016  # $FILENAME is conform's placeholder, not the shell's
+conform_shfmt="$(printf '%s\n' "$shfmt_block" |
+  grep -E '^[[:space:]]*(prepend_|append_)?args[[:space:]]*=' |
+  grep -oE '"[^"]*"' | tr -d '"' |
+  grep -vxE -- '-filename|\$FILENAME' | paste -sd' ' -)"
+shfmt_prepend="$(printf '%s\n' "$shfmt_block" | grep -cE '^[[:space:]]*prepend_args[[:space:]]*=')"
+if [ "${shfmt_ndefs:-0}" -gt 1 ]; then
+  bad "conform's shfmt formatter is configured in $shfmt_ndefs places, and whichever loads last wins:"
+  printf '%s\n' "$shfmt_defs" | sed 's/^/      /'
+elif [ -z "$lint_shfmt" ] || [ -z "$conform_shfmt" ]; then
+  bad "could not read shfmt's flags out of the Makefile's lint recipe or $CONFORM's args — the comparison would be vacuous"
+elif [ "${shfmt_prepend:-0}" -gt 0 ]; then
+  bad "$CONFORM gives shfmt prepend_args, and conform appends -i <shiftwidth> after them — the last -i wins, so a save re-indents to 4 and 'make lint' fails"
+elif [ "$lint_shfmt" != "$conform_shfmt" ]; then
+  bad "'make lint' runs shfmt $lint_shfmt but format-on-save runs shfmt $conform_shfmt — a script saved in nvim fails lint"
+else
+  ok "format-on-save and 'make lint' run shfmt with the same flags ($lint_shfmt), and conform adds none of its own"
+fi
+
 section "Shell"
 if command -v zsh >/dev/null 2>&1; then
   if zsh -n zsh/.zshrc 2>/dev/null; then ok ".zshrc parses"; else bad ".zshrc has a syntax error"; fi

@@ -403,6 +403,22 @@ mutate "a comment quoting a tmux.conf line that changed is caught" "line a comme
 mutate "a constant that cannot be read at all fails rather than comparing empty" "minimum window count" \
   sed -i '' '/^MIN_WINDOWS=/d' tmux/.local/bin/tmux-resurrect-saves
 
+# The defect this exists for, replayed: both files said -i 2 -ci, and every save
+# still re-indented to 4, because conform appends its own -i after prepend_args.
+mutate "shfmt flags passed as prepend_args are caught" "run shfmt with the same flags" \
+  sed -i '' 's/^\( *\)args = { "-i"/\1prepend_args = { "-i"/' nvim/.config/nvim/lua/rich/plugins/conform.lua
+
+mutate "make lint and format-on-save running shfmt differently is caught" "run shfmt with the same flags" \
+  sed -i '' 's/shfmt -i 2 -ci -d/shfmt -i 4 -ci -d/' Makefile
+
+# A later definition replaces the first, so reading conform.lua alone would
+# report flags format-on-save no longer uses.
+mutate "a second shfmt definition elsewhere in the lua config is caught" "run shfmt with the same flags" \
+  bash -c 'printf "\nrequire(\"conform\").formatters.shfmt = { args = { \"-i\", \"4\" } }\n" >> nvim/.config/nvim/lua/rich/keymaps.lua'
+
+mutate "unreadable shfmt args fail rather than passing vacuously" "run shfmt with the same flags" \
+  sed -i '' '/^ *args = { "-i"/d' nvim/.config/nvim/lua/rich/plugins/conform.lua
+
 # ---------------------------------------------------- what the repo says of itself
 
 # A hook and the make target that describes it are two copies of one command.

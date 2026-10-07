@@ -39,9 +39,21 @@ return {
         },
         formatters = {
             shfmt = {
-                -- Match the repo's shell scripts (2-space) instead of shfmt's
-                -- default tabs, so format-on-save doesn't reflow them.
-                prepend_args = { "-i", "2", "-ci" },
+                -- Match the repo's shell scripts (2-space, indented case arms)
+                -- instead of shfmt's default tabs, so format-on-save doesn't
+                -- reflow them.
+                --
+                -- `args`, not `prepend_args`. conform's own shfmt args append
+                -- `-i <shiftwidth>` whenever expandtab is set and no
+                -- .editorconfig is found, and shfmt lets the LAST -i win.
+                -- shiftwidth is 4 (options.lua), so `-i 2 -ci` prepended to
+                -- that became `-i 2 -ci -filename X -i 4`: every save
+                -- re-indented a script to 4 and `make lint` then failed on it.
+                -- Replacing the args whole leaves nothing after ours.
+                --
+                -- These must be the flags `make lint` passes shfmt, or saving
+                -- a file and linting it disagree; checks/repo.sh compares them.
+                args = { "-i", "2", "-ci", "-filename", "$FILENAME" },
             },
         },
         format_on_save = {

@@ -329,8 +329,13 @@ echo "== format-on-save actually reformats =="
 # lua at a nonexistent formatter left this assertion green. Ask conform which
 # formatter it would actually use for the buffer, and require that it is the
 # configured one AND that it is available.
-format_check() { # $1 = extension, $2 = ugly content, $3 = expected formatter
-  local ext="$1" ugly="$2" want="$3"
+#
+# Nor is "changed" enough where the flags matter. sh passed it for as long as
+# conform was appending its own -i after the configured flags: the file did
+# change -- to 4-space indentation, which `make lint` then rejected. Given the
+# exact text the formatter should produce, the check compares against that.
+format_check() { # $1 = extension, $2 = ugly content, $3 = expected formatter, $4 = exact result (optional)
+  local ext="$1" ugly="$2" want="$3" want_text="${4:-}"
   local f="$SANDBOX/fmt.$ext"
   # A formatter that is not installed is an environment fact, not a defect in
   # the config — skip and say which, the way every other suite here does. Only a
@@ -356,7 +361,16 @@ format_check() { # $1 = extension, $2 = ugly content, $3 = expected formatter
     # no available stylua for a .lua buffer" is actionable on its own.
     no "$ext: conform offers no available '$want' for this buffer"
   fi
-  if [ "$(cat "$f")" != "$ugly" ]; then
+  if [ -n "$want_text" ]; then
+    # $( ) strips trailing newlines from both sides alike.
+    if [ "$(cat "$f")" = "$(printf '%s' "$want_text")" ]; then
+      ok "$ext is formatted on save by $want, into exactly the text expected of it"
+    else
+      no "$ext: saving did not produce the text $want should make of it (expected, then got):"
+      printf '%s' "$want_text" | sed 's/^/      want| /'
+      sed 's/^/      got | /' "$f"
+    fi
+  elif [ "$(cat "$f")" != "$ugly" ]; then
     ok "$ext is formatted on save by $want, which conform reports as available"
   else
     no "$ext: $want is available but the file was not reformatted on save"
@@ -365,10 +379,22 @@ format_check() { # $1 = extension, $2 = ugly content, $3 = expected formatter
 
 format_check lua 'local   x=1
 ' stylua
+# What `make lint` passes, -i 2 -ci: two spaces, and case arms indented under
+# their `case`. The 8-space body tells -i 2 from conform's -i <shiftwidth>,
+# which made it 4; the case arm tells -ci from its absence.
 format_check sh 'if true; then
         echo hi
 fi
-' shfmt
+case x in
+a) echo a ;;
+esac
+' shfmt 'if true; then
+  echo hi
+fi
+case x in
+  a) echo a ;;
+esac
+'
 format_check json '{"a":1,   "b":2}
 ' prettier
 
