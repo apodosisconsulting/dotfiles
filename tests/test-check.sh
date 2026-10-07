@@ -207,6 +207,24 @@ mutate_machine "a wrong wezterm colour scheme is caught" "colour scheme" \
 mutate "a missing usstyle is caught" "usstyle" \
   sed -i '' 's/:RGB:usstyle/:RGB/' tmux/.config/tmux/tmux.conf
 
+# The defect this exists for: an append with no reset before it, so every
+# prefix S adds another copy to the list.
+mutate "terminal-features appended to with no reset is caught" "reset before it is appended to" \
+  sed -i '' '/^set -su terminal-features$/d' tmux/.config/tmux/tmux.conf
+
+mutate "a missing sync feature is caught" "declares sync, hyperlinks and overline" \
+  sed -i '' '/^set -sa terminal-features/s/:sync//' tmux/.config/tmux/tmux.conf
+
+mutate "a missing hyperlinks feature is caught" "declares sync, hyperlinks and overline" \
+  sed -i '' '/^set -sa terminal-features/s/:hyperlinks//' tmux/.config/tmux/tmux.conf
+
+mutate "a missing overline feature is caught" "declares sync, hyperlinks and overline" \
+  sed -i '' '/^set -sa terminal-features/s/:overline//' tmux/.config/tmux/tmux.conf
+
+# Last write wins: a reset further down throws away every append above it.
+mutate "a later reset that discards the declared features is caught" "declares sync, hyperlinks and overline" \
+  bash -c "printf '\nset -su terminal-features\n' >> tmux/.config/tmux/tmux.conf"
+
 # The defect this exists for: restore back on the key a held Ctrl reaches.
 mutate "restore left on resurrect's C-r default is caught" "restore is bound to" \
   sed -i '' "s/^set -g @resurrect-restore 'C-S-r'$/set -g @resurrect-restore 'C-r'/" tmux/.config/tmux/tmux.conf

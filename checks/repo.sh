@@ -262,6 +262,59 @@ else
   bad "terminal-features lacks usstyle — nvim's diagnostic undercurls are stripped"
 fi
 
+# terminal-features is a list, `set -sa` appends to it, and prefix S sources
+# the whole file again. With nothing resetting the list first, every reload
+# added another copy of the line: nothing broke, and the list only grew. The
+# reset has to come before the FIRST append, or it throws away the ones above.
+#
+# What tmux ends up declaring is what is appended after the LAST reset, because
+# a reset or a plain `set` further down replaces everything before it -- the
+# same last-write-wins shape as the checks above, so this reads the file the way
+# tmux applies it rather than looking for a mention. sync, hyperlinks and
+# overline are things WezTerm draws and tmux drops unless they are declared:
+# whole-frame redraws, OSC 8 links, SGR 53.
+tf_state="$(awk '
+  /^[[:space:]]*set(-option)?[[:space:]]+-[A-Za-z]+[[:space:]]+terminal-features([[:space:]]|$)/ {
+    line = $0
+    sub(/[[:space:]]#.*/, "", line)
+    if ($2 ~ /a/) {
+      if (!first_append) first_append = NR
+      feats = feats " " line
+    } else {
+      if (!first_reset) first_reset = NR
+      feats = ($2 ~ /u/) ? "" : line
+    }
+  }
+  END {
+    gsub(/[,:"\047]/, " ", feats)
+    print first_reset + 0, first_append + 0, feats
+  }
+' "$TMUXCONF")"
+read -r tf_reset tf_append tf_feats <<<"$tf_state"
+case "$tf_reset" in '' | *[!0-9]*) tf_reset=0 ;; esac
+case "$tf_append" in '' | *[!0-9]*) tf_append=0 ;; esac
+if [ "$tf_append" -eq 0 ]; then
+  bad "found no 'set -sa terminal-features' line — nothing declares what the outer terminal can do, and this check has nothing to read"
+elif [ "$tf_reset" -eq 0 ]; then
+  bad "terminal-features is appended to with no 'set -su terminal-features' before it — every prefix S adds another copy of the list"
+elif [ "$tf_reset" -gt "$tf_append" ]; then
+  bad "the terminal-features reset (line $tf_reset) comes after the first append (line $tf_append), so it throws that append away"
+else
+  ok "terminal-features is reset before it is appended to, so a reload does not add another copy"
+fi
+tf_missing=""
+for f in sync hyperlinks overline; do
+  case " $tf_feats " in
+    *" $f "*) ;;
+    *) tf_missing="$tf_missing $f" ;;
+  esac
+done
+if [ -n "$tf_missing" ]; then
+  bad "terminal-features does not end up declaring${tf_missing} — tmux strips those before they reach WezTerm"
+else
+  ok "terminal-features declares sync, hyperlinks and overline, so redraws arrive whole and links stay links"
+fi
+
 # Restore must not sit where a held Ctrl puts it, and the key it moved to has to
 # be a key the terminal can actually send.
 #
