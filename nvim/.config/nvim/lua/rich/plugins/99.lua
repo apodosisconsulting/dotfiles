@@ -8,9 +8,10 @@ return {
     -- Loaded on its keys. With the mappings set inside config, lazy had no
     -- trigger for 99 and loaded it at every start; its setup require()s
     -- nvim-cmp, so cmp and its two sources came too. Once loaded, 99 also
-    -- registers a VimLeavePre hook that writes ./tmp/99-state into whatever
-    -- directory nvim was started in, if that has a tmp/ (this repo does), and
-    -- a status loop that re-arms every second for the life of the editor.
+    -- registers a VimLeavePre hook that writes ./tmp/99-state into nvim's cwd
+    -- at the moment it quits, wherever it was started, if that has a tmp/
+    -- (this repo does), and a status loop that re-arms every second for the
+    -- life of the editor.
     -- lazy's stubs load 99 and replay the press, so the first <leader>9v still
     -- arrives in visual mode with the selection intact. One thing does move:
     -- 99 takes its project root from the cwd when it loads, which is now the

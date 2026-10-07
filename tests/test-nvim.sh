@@ -594,12 +594,14 @@ else
 fi
 
 echo
-echo "== quitting writes nothing into the directory nvim was started in =="
-# 99 keeps its request history in ./tmp/99-state, relative to nvim's cwd, and
-# writes it from a VimLeavePre hook its setup registers. While 99 loaded at
-# every start, every nvim started where a tmp/ exists wrote one on the way out:
-# this repo has one, so a run of this suite from the repo root did. 99 now
-# loads on its keys, so a plain start and quit must leave tmp/ empty.
+echo "== quitting writes nothing into nvim's cwd =="
+# 99 keeps its request history in ./tmp/99-state and writes it from a
+# VimLeavePre hook its setup registers. The path is resolved when the hook
+# runs, so it lands in nvim's cwd at quit, wherever nvim was started. While 99
+# loaded at every start, every nvim that quit in a directory with a tmp/ wrote
+# one there: this repo has one, so a run of this suite from the repo root did.
+# 99 now loads on its keys, so a plain start and quit must leave tmp/ empty.
+# Neither nvim below changes directory, so each one quits in CWD99.
 #
 # Two guards against a vacuous pass. The probe reports whether 99 loaded, so a
 # run in which nvim never started cannot pass by writing nothing; and the same
