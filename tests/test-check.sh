@@ -246,6 +246,19 @@ mutate "a later y rebinding with its own command is caught" "tmux copies to and 
 mutate "a prefix ] that never reads pbpaste is caught" "tmux copies to and pastes from" \
   sed -i '' 's/^bind \] run-shell "pbpaste | /bind ] run-shell "cat \/dev\/null | /' tmux/.config/tmux/tmux.conf
 
+# The defect this exists for: tpm back in the foreground, so every new server
+# and every prefix S waits for all the plugins to load.
+mutate "tpm run without -b is caught" "tpm loads in the background" \
+  sed -i '' "s|^run -b '~/.config/tmux/plugins/tpm/tpm'$|run '~/.config/tmux/plugins/tpm/tpm'|" tmux/.config/tmux/tmux.conf
+
+# tmux applies every run line, so one in the foreground is a wait however many
+# backgrounded ones there are.
+mutate "a second, foreground run of tpm is caught" "tpm loads in the background" \
+  bash -c "printf '\nrun '\''~/.config/tmux/plugins/tpm/tpm'\''\n' >> tmux/.config/tmux/tmux.conf"
+
+mutate "no tpm run line at all fails rather than passing vacuously" "tpm loads in the background" \
+  sed -i '' '/^run -b .*plugins\/tpm\/tpm/d' tmux/.config/tmux/tmux.conf
+
 mutate "an untracked lazy-lock.json is caught" "lazy-lock" \
   git rm -q --cached nvim/.config/nvim/lazy-lock.json
 

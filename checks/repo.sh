@@ -351,6 +351,28 @@ else
   bad "status-right (line $sr_line) is set AFTER tpm (line $tpm_line) — it overwrites continuum's #() and auto-save silently stops"
 fi
 
+# tpm has to load in the background. In the foreground the first session is not
+# created until every plugin's .tmux script has run, so a new WezTerm window
+# shows nothing for that long and prefix S blocks for as long again — slow, and
+# nothing ever says why.
+#
+# EVERY line that runs tpm is read, not just the last: tmux applies them all,
+# top to bottom, so one in the foreground anywhere in the file is a wait however
+# many backgrounded ones follow it. And finding none at all fails rather than
+# passing, because then this asserted nothing.
+tpm_runs="$(grep -cE '^[[:space:]]*run(-shell)?[[:space:]].*plugins/tpm/tpm' "$TMUXCONF")"
+tpm_fg="$(grep -E '^[[:space:]]*run(-shell)?[[:space:]].*plugins/tpm/tpm' "$TMUXCONF" |
+  grep -cvE '^[[:space:]]*run(-shell)?[[:space:]]+-[A-Za-z]*b[A-Za-z]*[[:space:]]')"
+case "$tpm_runs" in '' | *[!0-9]*) tpm_runs=0 ;; esac
+case "$tpm_fg" in '' | *[!0-9]*) tpm_fg=1 ;; esac
+if [ "$tpm_runs" -eq 0 ]; then
+  bad "found no line in tmux.conf that runs tpm — the plugins never load, and whether they would wait cannot be read"
+elif [ "$tpm_fg" -gt 0 ]; then
+  bad "tmux.conf runs tpm without -b — every new server and every prefix S waits for all the plugins to load"
+else
+  ok "tpm loads in the background (run -b), so a new session does not wait for the plugins"
+fi
+
 # Every key tmux.conf binds is either pressed by tests/test-bindings.sh or
 # listed there as deliberately not driven, with a reason.
 #

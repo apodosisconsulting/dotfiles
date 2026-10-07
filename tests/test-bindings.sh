@@ -42,13 +42,25 @@ mkdir -p "$RDIR" "$TEST_TMP/work"
 rm -f "$MARKER_FILE"
 
 # tpm removed: it clones plugins, and continuum would auto-save and auto-restore
-# against whatever directory it found. Everything else in the file is real.
+# against whatever directory it found. Everything else in the file is real. The
+# run line is matched with or without the -b tmux.conf gives it.
 awk '
   /^if "test ! -d ~\/\.config\/tmux\/plugins\/tpm"/ { skip = 2; next }
   skip > 0 { skip--; next }
-  /^run .~\/\.config\/tmux\/plugins\/tpm\/tpm./ { next }
+  /^run (-b )?.~\/\.config\/tmux\/plugins\/tpm\/tpm./ { next }
   { print }
 ' "$CONF" >"$TEST_CONF"
+
+# And the strip has to have WORKED, which nothing else would notice. Adding -b
+# to the run line was enough to stop the old pattern matching it: the line
+# would have stayed in, and this suite would have loaded the real plugins
+# against the real HOME -- the exact thing the strip exists to prevent. So stop
+# before a server starts.
+if grep -qE '^[[:space:]]*run(-shell)?[[:space:]].*tpm/tpm' "$TEST_CONF"; then
+  no "tpm's run line survived the strip, so the test server would load the real plugins"
+  finish
+  exit 1
+fi
 
 # The system clipboard, shimmed. tmux.conf sends every copy-mode copy to
 # copy-command and prefix+] reads pbpaste, both by name -- and its

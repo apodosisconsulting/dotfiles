@@ -156,6 +156,115 @@ if command -v nvim >/dev/null 2>&1; then
 fi
 
 echo
+echo "== a new tmux server does not wait for its plugins =="
+# tmux.conf runs tpm with -b. In the foreground the first session is not created
+# until every plugin's .tmux script has run, and that, not tmux, is most of what
+# a new WezTerm window waits for. checks/repo.sh asserts the -b; this measures
+# what it is for, with the real tmux.conf and the real installed plugins.
+#
+# Timed: `new-session -d` on a fresh private server, which is the session a new
+# window attaches to. Not timed: the plugins finishing in the background. Each
+# start waits for that before the server is killed, both so the next start does
+# not race a dying tpm and to prove the plugins loaded at all -- a start that
+# loaded no plugins is fast for the wrong reason, so it fails rather than counts.
+#
+# A scratch HOME, so tpm reads the plugin list from this repo's tmux.conf and
+# continuum saves and restores nowhere real; continuum's own halt file there
+# stops it attempting a restore at all. The plugins are the installed ones, read
+# through a symlink, and their absence is a skip: tmux.conf would otherwise
+# clone tpm from the network.
+#
+# The ceiling sits between the two cases rather than near either: when this was
+# written, medians of 15 here were 18ms with -b and 565ms without it. The median
+# is printed whether it passes or not, so a creep is visible before it trips.
+TMUX_THRESHOLD_MS=250
+
+# Median, min and max of RUNS starts in ms, after a discarded warm-up, and how
+# many of the RUNS had the plugins loaded. Every tmux it runs gets the scratch
+# HOME and none of the caller's TMUX or XDG variables. A warm-up that loads no
+# plugins ends it there: waiting out every run would only say the same thing.
+tmux_start() { # $1 = private socket, $2 = tmux.conf, $3 = scratch HOME
+  RUNS="$RUNS" python3 - "$@" <<'TMUX_START_EOF'
+import os, subprocess, sys, time, statistics
+sock, conf, home = sys.argv[1:4]
+env = {k: v for k, v in os.environ.items()
+       if not k.startswith(("TMUX", "XDG_")) and k != "ZDOTDIR"}
+env["HOME"] = home
+
+def tmux(*args):
+    return subprocess.run(["tmux", "-L", sock] + list(args), env=env,
+                          capture_output=True, text=True)
+
+def tpm_running(pid):
+    ps = subprocess.run(["ps", "-Ao", "ppid=,command="],
+                        capture_output=True, text=True).stdout
+    return any(l.split(None, 1)[0] == pid and "plugins/tpm/tpm" in l
+               for l in ps.splitlines() if l.strip())
+
+def loaded():
+    keys = tmux("list-keys", "-T", "prefix").stdout
+    return "tmux-resurrect/scripts/restore.sh" in keys
+
+def start():
+    t0 = time.time()
+    tmux("-f", conf, "new-session", "-d")
+    ms = (time.time() - t0) * 1000
+    pid = tmux("display-message", "-p", "#{pid}").stdout.strip()
+    deadline = time.time() + 10
+    while time.time() < deadline and (tpm_running(pid) or not loaded()):
+        time.sleep(0.05)
+    ok = loaded()
+    tmux("kill-server")
+    while pid.isdigit() and time.time() < deadline + 5:
+        try:
+            os.kill(int(pid), 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.02)
+    return ms, ok
+
+if not start()[1]:  # warm-up, discarded
+    print("0 0 0 0")
+    sys.exit()
+xs, n = [], 0
+for _ in range(int(os.environ["RUNS"])):
+    ms, ok = start()
+    xs.append(ms)
+    n += ok
+print("%d %d %d %d" % (statistics.median(xs), min(xs), max(xs), n))
+TMUX_START_EOF
+}
+
+PLUGINS="$HOME/.config/tmux/plugins"
+TMUX_HOME="$TEST_TMP/tmux-home"
+mkdir -p "$TMUX_HOME/.config/tmux"
+ln -s "$PLUGINS" "$TMUX_HOME/.config/tmux/plugins"
+ln -s "$REPO_ROOT/tmux/.config/tmux/tmux.conf" "$TMUX_HOME/.config/tmux/tmux.conf"
+: >"$TMUX_HOME/tmux_no_auto_restore"
+# The plugins are looked for THROUGH the link, so a link that did not work is a
+# skip as well, and never a tmux.conf left to clone tpm into the scratch HOME.
+if ! command -v tmux >/dev/null 2>&1; then
+  printf '  \033[33mSKIP\033[0m  tmux is not installed\n'
+elif [ ! -x "$TMUX_HOME/.config/tmux/plugins/tpm/tpm" ] ||
+  [ ! -d "$TMUX_HOME/.config/tmux/plugins/tmux-resurrect" ]; then
+  printf '  \033[33mSKIP\033[0m  tpm or tmux-resurrect is not installed in %s\n' "$PLUGINS"
+else
+  # shellcheck disable=SC2034  # read by tmux_test_teardown in lib.sh
+  TMUX_SOCK="$(tmux_test_socket performance)"
+  require_private_socket
+  trap cleanup_tmux_suite EXIT
+  read -r med lo hi loaded <<<"$(tmux_start "$TMUX_SOCK" "$TMUX_HOME/.config/tmux/tmux.conf" "$TMUX_HOME")"
+  report "tmux new-session -d" "$med" "$lo" "$hi" "$TMUX_THRESHOLD_MS"
+  if [ "${loaded:-0}" -ne "$RUNS" ]; then
+    no "the plugins loaded in ${loaded:-0} of $RUNS starts, so the timing is of a server without them"
+  elif [ "${med:-9999}" -lt "$TMUX_THRESHOLD_MS" ]; then
+    ok "a tmux session exists ${med}ms after the server starts, under the ${TMUX_THRESHOLD_MS}ms ceiling"
+  else
+    no "a tmux session takes ${med}ms to exist, over the ${TMUX_THRESHOLD_MS}ms ceiling"
+  fi
+fi
+
+echo
 echo "== the completion dump is not rebuilt on every shell =="
 # Narrower than it first looked. Reintroducing the original bug did NOT trip
 # this, because plain `compinit` only redumps when the dump is actually stale —
