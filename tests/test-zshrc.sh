@@ -262,6 +262,43 @@ assert "...and that copy passes the comment along as arguments, so the test can 
   [ "$(printf '%s\n' "$out" | sed -n 1p)" = "a # b" ]
 
 echo
+echo "== no prompt runs a starship to draw an empty right prompt =="
+# starship's init sets RPROMPT to a second `starship prompt --right`, run before
+# every prompt. starship.toml has no right_format, so .zshrc clears RPROMPT
+# after the init, and checks/repo.sh keeps the two files in step. What that
+# cannot see is the installed starship: whether its right prompt really is
+# empty with this config, and whether it sets RPROMPT once at init or again
+# from a hook before every prompt, which would undo the clearing unseen.
+if ! command -v starship >/dev/null 2>&1; then
+  printf '  \033[33mSKIP\033[0m  %s\n' "starship is not installed"
+else
+  # By its full path: env -i leaves no PATH to find it on, and a starship that
+  # never ran prints nothing, which is what the right prompt is expected to do.
+  starship_bin="$(command -v starship)"
+  star() { (cd "$TEST_TMP" && env -i HOME="$TEST_TMP" PATH=/usr/bin:/bin \
+    STARSHIP_CONFIG="$REPO_ROOT/starship/.config/starship.toml" "$starship_bin" prompt "$@"); }
+  assert "with this repo's starship.toml the left prompt draws something" \
+    [ -n "$(star)" ]
+  right="$(star --right)"
+  rc=$?
+  assert "...and the right prompt draws nothing, so clearing it loses nothing" \
+    [ "$rc:$right" = "0:" ]
+  # shellcheck disable=SC2016  # zsh code, expanded by zsh
+  after_precmd='for f in $precmd_functions; do $f; done; print -r -- "[$RPROMPT]"'
+  rp="$(in_rc "$real_home" zsh -i -c "$after_precmd" 2>/dev/null)"
+  assert "RPROMPT is still empty after starship init and a prompt's precmd hooks" \
+    [ "$rp" = "[]" ]
+
+  # Inline negative control: without the line, RPROMPT is starship's.
+  no_clear="$(sed "/^[[:space:]]*RPROMPT=''\$/d" "$ZSHRC" | rc_home no-rprompt-clear)"
+  refute "a copy of .zshrc that does not clear RPROMPT really is different" \
+    cmp -s "$ZSHRC" "$no_clear/.zshrc"
+  rp="$(in_rc "$no_clear" zsh -i -c "$after_precmd" 2>/dev/null)"
+  assert "...and in that copy RPROMPT runs starship prompt --right, so the test can fail" \
+    contains "$rp" "prompt --right"
+fi
+
+echo
 echo "== a missing ~/.zshrc.local must not poison \$? =="
 # It is the last statement in the file, so with `[[ -f x ]] && source x` and no
 # override present the exit status is 1 and starship draws its error character

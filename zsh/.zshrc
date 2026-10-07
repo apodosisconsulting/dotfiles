@@ -181,6 +181,11 @@ fi
 # -------------------------
 if command -v starship >/dev/null 2>&1; then
   eval "$(starship init zsh)"
+  # The init sets RPROMPT to a second `starship prompt --right`, run before
+  # every prompt. starship.toml has no right_format, so that process draws
+  # nothing; clearing RPROMPT saves the fork. Delete this line if starship.toml
+  # gains a right_format: checks/repo.sh fails until the two agree.
+  RPROMPT=''
 else
   PROMPT='%1~ %# '
 fi

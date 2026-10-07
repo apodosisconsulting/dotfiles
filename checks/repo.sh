@@ -621,6 +621,82 @@ case "$comments" in
   *) bad ".zshrc never sets interactive_comments — a pasted # comment becomes arguments" ;;
 esac
 
+# starship's init sets RPROMPT to a `starship prompt --right` run before every
+# prompt, and draws nothing with it unless starship.toml has a right_format.
+# .zshrc clears RPROMPT after the init when there is none, so the two files
+# have to agree. Only a top-level right_format counts: under a [table] header
+# the key belongs to that module. The last RPROMPT assignment is the one that
+# holds.
+#
+# A line inside a """ or ''' string is text, neither key nor header. Every
+# starship preset writes format as one, with lines that open with
+# [text](style); taking those for a header stopped the reader above a
+# right_format it never saw, and the check passed while RPROMPT='' hid a right
+# prompt starship really drew. Comment lines are skipped before the quotes are
+# counted, so a comment that mentions """ cannot open a string either.
+STARSHIP_TOML="starship/.config/starship.toml"
+right_format="$(awk '
+  BEGIN { sq = sprintf("%c", 39) }
+  !in_str && /^[[:space:]]*#/ { next }
+  {
+    was_in = in_str
+    s = $0
+    while (1) {
+      if (in_str) {
+        p = index(s, delim)
+        if (!p) break
+        in_str = 0
+      } else {
+        p = index(s, "\"\"\""); q = index(s, sq sq sq)
+        if (q && (!p || q < p)) { p = q; delim = sq sq sq }
+        else if (p) delim = "\"\"\""
+        else break
+        in_str = 1
+      }
+      s = substr(s, p + 3)
+    }
+    if (was_in) next
+  }
+  /^[[:space:]]*\[/ { exit }
+  /^[[:space:]]*right_format[[:space:]]*=/ { print NR }
+' "$STARSHIP_TOML" 2>/dev/null)"
+starship_init_at="$(grep -m1 -nE '^[^#]*starship init zsh' zsh/.zshrc 2>/dev/null | cut -d: -f1)"
+rprompt="$(awk '
+  /^[[:space:]]*#/ { next }
+  /^[[:space:]]*(export[[:space:]]+)?RPROMPT=/ {
+    v = $0; sub(/^[[:space:]]*(export[[:space:]]+)?RPROMPT=/, "", v)
+    sub(/[[:space:]]*(#.*)?$/, "", v)
+    last = NR ":" v
+  }
+  END { print last }
+' zsh/.zshrc 2>/dev/null)"
+rprompt_at="${rprompt%%:*}"
+rprompt_val="${rprompt#*:}"
+if [ ! -s "$STARSHIP_TOML" ]; then
+  bad "could not read $STARSHIP_TOML — the RPROMPT check would be vacuous"
+elif [ -z "$starship_init_at" ]; then
+  bad "could not find starship init in .zshrc — the RPROMPT check would be vacuous"
+elif [ -n "$right_format" ]; then
+  if [ -n "$rprompt" ] && [ "$rprompt_at" -gt "$starship_init_at" ]; then
+    bad "starship.toml sets right_format (line $right_format) but .zshrc replaces RPROMPT after starship init (line $rprompt_at) — starship's right prompt never draws"
+  else
+    ok "starship.toml has a right_format, and .zshrc leaves starship's RPROMPT alone"
+  fi
+elif [ -z "$rprompt" ]; then
+  bad "starship.toml has no right_format, and .zshrc never clears RPROMPT — every prompt forks a starship that draws nothing"
+elif [ "$rprompt_at" -le "$starship_init_at" ]; then
+  bad ".zshrc clears RPROMPT (line $rprompt_at) before starship init (line $starship_init_at), which sets it again"
+else
+  case "$rprompt_val" in
+    "''" | '""' | "")
+      ok ".zshrc clears RPROMPT after starship init, as starship.toml has no right_format"
+      ;;
+    *)
+      bad ".zshrc's last RPROMPT assignment (line $rprompt_at) is $rprompt_val, not '' — starship.toml has no right_format"
+      ;;
+  esac
+fi
+
 section "Known shell traps"
 # A pipeline ending in a quiet grep, under `set -o pipefail`: grep exits on the
 # first match, the producer takes SIGPIPE, and the pipeline reports FAILURE even
