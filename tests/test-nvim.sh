@@ -563,6 +563,28 @@ else
 fi
 
 echo
+echo "== quitting writes nothing into the directory nvim was started in =="
+# 99 keeps its request history in ./tmp/99-state, relative to nvim's cwd, and
+# writes it from a VimLeavePre hook its setup registers. While 99 loaded at
+# every start, every nvim started where a tmp/ exists wrote one on the way out:
+# this repo has one, so a run of this suite from the repo root did. 99 now
+# loads on its keys, so a plain start and quit must leave tmp/ empty.
+#
+# Two guards against a vacuous pass. The probe reports whether 99 loaded, so a
+# run in which nvim never started cannot pass by writing nothing; and the same
+# start and quit with 99 loaded by hand must write the file, so a 99 that has
+# moved its state somewhere else cannot pass either.
+CWD99="$TEST_TMP/cwd99"
+mkdir -p "$CWD99/tmp"
+out="$(cd "$CWD99" && nv "$SANDBOX/start.lua" \
+  'lua print("LOADED_99=" .. tostring(require("lazy.core.config").plugins["99"]._.loaded ~= nil))')"
+assert "a plain start does not load 99" contains "$out" "LOADED_99=false"
+refute "...and quitting leaves no tmp/99-state in nvim's cwd" [ -e "$CWD99/tmp/99-state" ]
+(cd "$CWD99" && nv "$SANDBOX/start.lua" 'lua require("lazy").load({ plugins = { "99" } })' >/dev/null)
+assert "with 99 loaded, quitting does write it, so the check above can fail" \
+  [ -e "$CWD99/tmp/99-state" ]
+
+echo
 echo "== nothing leaked into the real config or repo =="
 assert "the scratch state dir was used" [ -d "$STATE" ]
 refute "no stray files were left in the sandbox's parent" [ -e "$TEST_TMP/shada" ]

@@ -5,6 +5,44 @@
 --   Vibe:   open-ended agentic exploration.
 return {
     "ThePrimeagen/99",
+    -- Loaded on its keys. With the mappings set inside config, lazy had no
+    -- trigger for 99 and loaded it at every start; its setup require()s
+    -- nvim-cmp, so cmp and its two sources came too. Once loaded, 99 also
+    -- registers a VimLeavePre hook that writes ./tmp/99-state into whatever
+    -- directory nvim was started in, if that has a tmp/ (this repo does), and
+    -- a status loop that re-arms every second for the life of the editor.
+    -- lazy's stubs load 99 and replay the press, so the first <leader>9v still
+    -- arrives in visual mode with the selection intact. One thing does move:
+    -- 99 takes its project root from the cwd when it loads, which is now the
+    -- first press rather than startup.
+    keys = {
+        -- Visual mode only, on purpose: 99 uses whatever the LAST visual
+        -- selection was, so a normal-mode binding could quietly act on an old
+        -- one.
+        {
+            "<leader>9v",
+            function()
+                require("99").visual()
+            end,
+            mode = "v",
+            desc = "99: Visual",
+        },
+        -- For a request you no longer want: cancels everything in flight.
+        {
+            "<leader>9x",
+            function()
+                require("99").stop_all_requests()
+            end,
+            desc = "99: Stop all",
+        },
+        {
+            "<leader>9s",
+            function()
+                require("99").search()
+            end,
+            desc = "99: Search",
+        },
+    },
     config = function()
         local _99 = require("99")
 
@@ -76,25 +114,5 @@ return {
                 "AGENT.md",
             },
         })
-
-        -- take extra note that i have visual selection only in v mode
-        -- technically whatever your last visual selection is, will be used
-        -- so i have this set to visual mode so i dont screw up and use an
-        -- old visual selection
-        --
-        -- likely ill add a mode check and assert on required visual mode
-        -- so just prepare for it now
-        vim.keymap.set("v", "<leader>9v", function()
-            _99.visual()
-        end, { desc = "99: Visual" })
-
-        --- if you have a request you dont want to make any changes, just cancel it
-        vim.keymap.set("n", "<leader>9x", function()
-            _99.stop_all_requests()
-        end, { desc = "99: Stop all" })
-
-        vim.keymap.set("n", "<leader>9s", function()
-            _99.search()
-        end, { desc = "99: Search" })
     end,
 }

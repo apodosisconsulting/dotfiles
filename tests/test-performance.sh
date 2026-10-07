@@ -122,23 +122,23 @@ echo "== which plugins load eagerly, by name =="
 # is what was actually wanted.
 #
 # rose-pine must be eager — a colorscheme that loads late means an unstyled
-# flash. lazy.nvim is the loader itself. 99 declares no lazy trigger, so it
-# loads at start.
+# flash. lazy.nvim is the loader itself. Nothing else needs to be.
 #
-# nvim-cmp is the interesting one, and this comment had it wrong for as long as
-# it existed: cmp DOES declare a trigger (event = "InsertEnter"). It is eager
-# because 99's config calls require("cmp") while it loads, and lazy honours a
-# require by loading that plugin there and then; cmp-buffer and cmp-path follow
-# as its dependencies. lazy records the reason, which is how that was settled
-# rather than guessed:
+# Until 99 had its keys declared as lazy `keys`, this set was six, and the four
+# extra are the reason the failure branch below exists. 99 had no lazy trigger,
+# so it loaded at start, and nvim-cmp came with it even though cmp DOES declare
+# one (event = "InsertEnter"): 99's config calls require("cmp") while it loads,
+# and lazy honours a require by loading that plugin there and then, with
+# cmp-buffer and cmp-path as its dependencies. lazy records the reason, which
+# is how that was settled rather than guessed:
 #
 #   require("lazy.core.config").plugins["nvim-cmp"]._.loaded
 #     -> { plugin = "99", require = "cmp" }
 #
 # So the failure branch prints those reasons. "The eager set changed" on its own
-# sends you looking through six plugin specs for a trigger that may not be the
+# sends you looking through every plugin spec for a trigger that may not be the
 # thing that changed at all.
-EXPECTED_EAGER="99 cmp-buffer cmp-path lazy.nvim nvim-cmp rose-pine"
+EXPECTED_EAGER="lazy.nvim rose-pine"
 if command -v nvim >/dev/null 2>&1; then
   actual="$(nvim --headless \
     -c 'lua local p = require("lazy.core.config").plugins; local n = {}; for k, v in pairs(p) do if v._.loaded then n[#n + 1] = k end end; table.sort(n); print("EAGER:" .. table.concat(n, " "))' \
