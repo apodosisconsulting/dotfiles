@@ -63,11 +63,33 @@ nv() { # $1 = file, $2... = -c commands
   local args=()
   local c
   for c in "$@"; do args+=(-c "$c"); done
-  PATH="$CLIP_BIN:$PATH" XDG_STATE_HOME="$STATE" nvim --headless "$file" "${args[@]}" -c 'qa!' 2>&1
+  # ${args[@]+...}, not a bare "${args[@]}": under set -u, bash 3.2 -- the
+  # macOS /bin/bash that runs this suite -- calls an EMPTY array unbound and
+  # abandons the command. The one caller with no -c commands is the startup
+  # check below, so nvim never started there, the substitution came back empty,
+  # and "no errors on startup" passed on that emptiness for as long as it
+  # existed. The negative control under it is what keeps this from coming back.
+  PATH="$CLIP_BIN:$PATH" XDG_STATE_HOME="$STATE" nvim --headless "$file" ${args[@]+"${args[@]}"} -c 'qa!' 2>&1
 }
 
 echo "== it starts, and starts clean =="
 printf 'local x = 1\n' >"$SANDBOX/start.lua"
+# The negative control first. "No errors" is an assertion about EMPTY output,
+# and empty is also what a probe that never ran produces -- which is exactly
+# how this check passed while nv() was failing before it reached nvim. So the
+# same call, with no -c commands, against a copy of the config that throws at
+# the end of init.lua, has to come back with that error in it. If it does not,
+# the clean result below proves nothing. XDG_DATA_HOME is left alone, so the
+# copy finds the installed plugins and lazy clones nothing. cp's complaints are
+# dropped: a live config can hold a dangling link an old stow left behind, which
+# nvim never opens and the control does not need.
+BROKEN="$TEST_TMP/broken-config"
+mkdir -p "$BROKEN"
+cp -RL "$NVIM_CONFIG" "$BROKEN/nvim" 2>/dev/null
+printf '\nerror("negative control")\n' >>"$BROKEN/nvim/init.lua"
+out="$(XDG_CONFIG_HOME="$BROKEN" nv "$SANDBOX/start.lua")"
+assert "a config that throws at startup is reported, so the next check can fail" \
+  contains "$out" "negative control"
 out="$(nv "$SANDBOX/start.lua")"
 assert "no errors on startup" [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]
 
