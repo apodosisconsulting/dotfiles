@@ -401,6 +401,28 @@ mutate_adds "a recipeless target on a SECOND .PHONY line is caught" "has a recip
   "declared .PHONY but has no recipe" \
   bash -c 'printf "\n.PHONY: ghost\n" >> Makefile'
 
+# ---------------------------------------------------- what a fresh machine gets
+
+# A formatter conform runs that bootstrap never installs, and a linter the same.
+mutate "a formatter bootstrap does not install is caught" "formatters and linters the nvim config runs" \
+  sed -i '' '/^    black$/d' bootstrap.sh
+
+mutate "a linter bootstrap does not install is caught" "formatters and linters the nvim config runs" \
+  sed -i '' '/^    shellcheck$/d' bootstrap.sh
+
+# The two named exceptions have to stay conditional on what provides them, or
+# naming them would excuse them for good.
+mutate "gofmt without go is caught" "formatters and linters the nvim config runs" \
+  sed -i '' '/^    go$/d' bootstrap.sh
+
+mutate "rustfmt without the rustup install is caught" "formatters and linters the nvim config runs" \
+  sed -i '' '/sh\.rustup\.rs/d' bootstrap.sh
+
+# The guard that is load-bearing: no formatters read means the loop runs zero
+# times, and "all 0 installed" would otherwise pass.
+mutate "no formatters read out of conform.lua fails rather than passing vacuously" "formatters and linters the nvim config runs" \
+  sed -i '' 's/formatters_by_ft = {/formatters_for = {/' nvim/.config/nvim/lua/rich/plugins/conform.lua
+
 # ------------------------------------------- constants written down more than once
 
 # The pair the comments named: the guard's floor and prune's idea of degenerate.

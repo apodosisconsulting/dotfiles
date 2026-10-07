@@ -624,6 +624,54 @@ for target in $phony; do
   fi
 done
 
+section "Fresh machine"
+# checks/machine.sh warns when a formatter conform.lua names is missing from
+# THIS machine. Nothing asked whether bootstrap.sh would install it on the NEXT
+# one, so a formatter or linter added to the nvim config and not to bootstrap's
+# brew list is a silent no-op for its filetypes on every fresh machine, while
+# the machine it was added on, set up by hand, stays green.
+#
+# A tool is matched to a formula of the same name. Two come with a toolchain
+# instead: gofmt with go, rustfmt with the rustup install install_rust runs.
+# They are named here, with what provides them, so the exception is visible
+# rather than a gap, and a tool whose formula is named differently needs a line
+# here the same way. The brew list is brew_install_pkgs' `local pkgs=(` array,
+# comments dropped, one package per word; the rustup install has to be a line
+# of code, not a comment.
+#
+# lint.lua is read when it is there and not required: it is one plugin's
+# config, and linting may stop going through it. conform.lua is required, and
+# reading no formatters out of it fails rather than comparing nothing.
+boot_pkgs="$(sed -n '/^brew_install_pkgs()/,/^}/p' bootstrap.sh |
+  sed -n '/local pkgs=(/,/)/p' |
+  sed -e 's/#.*//' -e 's/local pkgs=(//' -e 's/)//' |
+  tr -s '[:blank:]' '\n' | grep -v '^$')"
+boot_rustup="$(grep -vE '^[[:space:]]*#' bootstrap.sh | grep -cF 'sh.rustup.rs')"
+conform_tools="$(sed -n '/formatters_by_ft/,/^ *}/p' nvim/.config/nvim/lua/rich/plugins/conform.lua |
+  grep '= {' | grep -oE '"[^"]+"' | tr -d '"')"
+lint_tools=""
+if [ -f nvim/.config/nvim/lua/rich/plugins/lint.lua ]; then
+  lint_tools="$(sed -n '/linters_by_ft/,/^ *}/p' nvim/.config/nvim/lua/rich/plugins/lint.lua |
+    grep '= {' | grep -oE '"[^"]+"' | tr -d '"')"
+fi
+if [ -z "$boot_pkgs" ] || [ -z "$conform_tools" ]; then
+  bad "could not read bootstrap's brew list or conform's formatters — the comparison would be vacuous"
+else
+  boot_bad=0
+  tools_seen=0
+  for t in $(printf '%s\n%s\n' "$conform_tools" "$lint_tools" | grep -v '^$' | sort -u); do
+    tools_seen=$((tools_seen + 1))
+    case "$t" in
+      gofmt) grep -qxF go <<<"$boot_pkgs" && continue ;;
+      rustfmt) [ "${boot_rustup:-0}" -gt 0 ] && continue ;;
+      *) grep -qxF "$t" <<<"$boot_pkgs" && continue ;;
+    esac
+    bad "the nvim config runs $t, and bootstrap.sh does not install it — on a fresh machine its filetypes are silently not formatted or linted"
+    boot_bad=$((boot_bad + 1))
+  done
+  [ "$boot_bad" -eq 0 ] && ok "bootstrap.sh installs all $tools_seen formatters and linters the nvim config runs"
+fi
+
 section "Git hooks"
 # A hook and a make target are two copies of one command, and everything that
 # DESCRIBES a hook — the README, the Makefile's own help, bootstrap.sh, the
