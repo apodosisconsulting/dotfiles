@@ -351,6 +351,18 @@ mutate "a shell script with no shebang is caught, because lint would skip it" "d
 mutate "CI no longer running the linters is caught" "CI runs 'make lint'" \
   sed -i '' 's/^        run: make lint$/        run: true/' .github/workflows/ci.yml
 
+# The defect this exists for: CI priming with sync, which updates every plugin
+# past the lock before the suites run.
+mutate "CI priming the plugins with sync is caught" "at the commits lazy-lock.json pins" \
+  sed -i '' 's/"+Lazy! restore"/"+Lazy! sync"/' .github/workflows/ci.yml
+
+# A restore that a later update undoes is no restore at all.
+mutate "an update after the restore is caught" "at the commits lazy-lock.json pins" \
+  sed -i '' 's/"+Lazy! restore" +qa/"+Lazy! restore" "+Lazy! update" +qa/' .github/workflows/ci.yml
+
+mutate "CI never running restore at all is caught" "at the commits lazy-lock.json pins" \
+  sed -i '' 's/"+Lazy! restore" +qa/+qa/' .github/workflows/ci.yml
+
 # ------------------------------------- assertions that could pass while being wrong
 
 # The old version of this compared COUNTS: renaming a binding kept the total at

@@ -1022,4 +1022,20 @@ else
   else
     bad "CI does not run on macOS, so it cannot exercise this repo honestly"
   fi
+  # The plugins CI tests have to be the ones lazy-lock.json pins, which is what
+  # a fresh machine gets. CI primed them with `Lazy! sync`, and sync runs
+  # update: every plugin moved to the tip of its branch and the lock was
+  # rewritten, so the suites went green on versions this repo never chose.
+  # restore is update held to the lock. Comment lines are dropped so the
+  # comment explaining this cannot satisfy it, and a sync or update ANYWHERE
+  # fails, because a later step running one would undo the restore.
+  lazy_cmds="$(grep -vE '^[[:space:]]*#' "$CI" | grep -oE 'Lazy!?[[:space:]]+[a-z]+')"
+  lazy_unpinned="$(grep -E '[[:space:]](sync|update)$' <<<"$lazy_cmds" | sort -u | tr '\n' ' ')"
+  if [ -n "$lazy_unpinned" ]; then
+    bad "CI runs ${lazy_unpinned}— that moves every plugin past lazy-lock.json, so CI tests versions this repo never pinned"
+  elif ! grep -qE '[[:space:]]restore$' <<<"$lazy_cmds"; then
+    bad "CI never runs 'Lazy! restore', so nothing holds the plugins it tests to lazy-lock.json"
+  else
+    ok "CI primes the plugins with 'Lazy! restore', at the commits lazy-lock.json pins"
+  fi
 fi
