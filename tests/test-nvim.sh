@@ -36,6 +36,26 @@ STATE="$TEST_TMP/state"
 SANDBOX="$TEST_TMP/sandbox"
 mkdir -p "$STATE" "$SANDBOX"
 
+# The system clipboard is shimmed for every nvim this suite starts.
+#
+# options.lua sets clipboard=unnamedplus, so in any nvim started here a yank, a
+# delete or a change runs pbcopy and a p runs pbpaste -- looked up by name on
+# PATH at the moment of the call. Without this, a probe that so much as `dd`s a
+# line would overwrite whatever the person running the suite last copied, with
+# no way to get it back. --headless does not prevent it: a yank inside a -c
+# command is deferred, not skipped, and reaches pbcopy when the command ends.
+#
+# PATH rather than g:clipboard: it also catches anything that shells out to
+# pbcopy itself, and a g:clipboard passed with --cmd would be silently replaced
+# by any config that ever sets its own. The clipboard section below checks that
+# nvim really resolved these before it lets any probe write.
+CLIP_BIN="$TEST_TMP/clip-bin"
+CLIP_FILE="$TEST_TMP/clipboard"
+mkdir -p "$CLIP_BIN"
+printf '#!/bin/sh\ncat >"%s"\n' "$CLIP_FILE" >"$CLIP_BIN/pbcopy"
+printf '#!/bin/sh\ncat "%s" 2>/dev/null\n' "$CLIP_FILE" >"$CLIP_BIN/pbpaste"
+chmod +x "$CLIP_BIN/pbcopy" "$CLIP_BIN/pbpaste"
+
 # Run nvim headless on a file, with whatever -c commands follow.
 nv() { # $1 = file, $2... = -c commands
   local file="$1"
@@ -43,7 +63,7 @@ nv() { # $1 = file, $2... = -c commands
   local args=()
   local c
   for c in "$@"; do args+=(-c "$c"); done
-  XDG_STATE_HOME="$STATE" nvim --headless "$file" "${args[@]}" -c 'qa!' 2>&1
+  PATH="$CLIP_BIN:$PATH" XDG_STATE_HOME="$STATE" nvim --headless "$file" "${args[@]}" -c 'qa!' 2>&1
 }
 
 echo "== it starts, and starts clean =="
@@ -363,6 +383,82 @@ for mode in n v; do
     comm -13 "$TEST_TMP/want" "$TEST_TMP/got" | sed 's/^/      NEW since:    /'
   fi
 done
+
+echo
+echo "== one clipboard: yank, paste and delete all go through the system's =="
+# What options.lua and keymaps.lua claim, checked by doing it: yy has to land
+# on pbcopy, p has to read pbpaste, and the two void-register maps have to
+# leave the clipboard alone. Plain dd is asserted to WRITE it, because that is
+# the documented cost, and without it the <leader>d assertion could pass on a
+# config where nothing reached the clipboard at all.
+#
+# The shims are checked FIRST. If nvim resolved pbcopy anywhere else, every
+# probe below would be writing to a real clipboard, so a failure there skips
+# them rather than carrying on.
+#
+# The leader maps are fed as keys, not run with :normal. Ex strips the space
+# between a command and its argument, so `execute "normal \<Space>dd"` runs a
+# plain dd -- and the <leader>d assertion failed on a correct config until that
+# was found. vim.keycode expands <leader> from mapleader, so each probe says
+# what it means.
+printf 'alpha\nbeta\n' >"$SANDBOX/clip.txt"
+out="$(nv "$SANDBOX/clip.txt" \
+  'lua print("PBCOPY=" .. vim.fn.exepath("pbcopy") .. " PBPASTE=" .. vim.fn.exepath("pbpaste") .. " CB=" .. vim.o.clipboard)')"
+if contains "$out" "PBCOPY=$CLIP_BIN/pbcopy PBPASTE=$CLIP_BIN/pbpaste"; then
+  ok "nvim resolves pbcopy and pbpaste to this suite's shims, not the real clipboard"
+  # Read straight after startup, which is what a vim.schedule'd set would fail.
+  assert "clipboard=unnamedplus is already set when a -c command runs" contains "$out" "CB=unnamedplus"
+
+  rm -f "$CLIP_FILE"
+  nv "$SANDBOX/clip.txt" 'normal! jyy' >/dev/null
+  assert "yy puts the line on the system clipboard" [ "$(cat "$CLIP_FILE" 2>/dev/null)" = "beta" ]
+
+  # From mid-line, so Neovim's own Y (to end of line) would copy "lpha".
+  rm -f "$CLIP_FILE"
+  nv "$SANDBOX/clip.txt" 'lua vim.api.nvim_feedkeys(vim.keycode("l<leader>Y"), "mx", false)' >/dev/null
+  assert "<leader>Y still copies the whole line, as it did before unnamedplus" \
+    [ "$(cat "$CLIP_FILE" 2>/dev/null)" = "alpha" ]
+
+  printf 'from another app\n' >"$CLIP_FILE"
+  out="$(nv "$SANDBOX/clip.txt" 'normal! p' 'lua print("LINE2=" .. vim.fn.getline(2))')"
+  assert "p pastes what was copied outside nvim" contains "$out" "LINE2=from another app"
+
+  printf 'keep me\n' >"$CLIP_FILE"
+  nv "$SANDBOX/clip.txt" 'normal! dd' >/dev/null
+  assert "dd replaces the clipboard too: the cost options.lua documents" \
+    [ "$(cat "$CLIP_FILE")" = "alpha" ]
+
+  printf 'keep me\n' >"$CLIP_FILE"
+  out="$(nv "$SANDBOX/clip.txt" \
+    'lua vim.api.nvim_feedkeys(vim.keycode("<leader>dd"), "mx", false)' \
+    'lua print("LINES=" .. table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "|"))')"
+  # The deletion is asserted as well: a <leader>d that deleted nothing would
+  # leave the clipboard alone too.
+  assert "<leader>d deletes the line" contains "$out" "LINES=beta"
+  assert "...without replacing the clipboard" [ "$(cat "$CLIP_FILE")" = "keep me" ]
+
+  printf 'keep me' >"$CLIP_FILE"
+  out="$(nv "$SANDBOX/clip.txt" \
+    'lua vim.api.nvim_feedkeys(vim.keycode("jviw<leader>p"), "mx", false)' \
+    'lua print("LINE2=" .. vim.fn.getline(2))')"
+  assert "<leader>p pastes the clipboard over a selection" contains "$out" "LINE2=keep me"
+  assert "...and the clipboard still holds the pasted text, not the text it replaced" \
+    [ "$(cat "$CLIP_FILE")" = "keep me" ]
+
+  # The case the old "_dP got wrong: a selection that ends the line. "_d left the
+  # cursor on the space before the gap and P put in front of it, so this came
+  # out "fooX ". A whole-line selection, as above, cannot show it.
+  printf 'foo bar\n' >"$SANDBOX/clip_eol.txt"
+  printf 'X' >"$CLIP_FILE"
+  # shellcheck disable=SC2016  # $ is vim's end-of-line motion, not the shell's
+  out="$(nv "$SANDBOX/clip_eol.txt" \
+    'lua vim.api.nvim_feedkeys(vim.keycode("$viw<leader>p"), "mx", false)' \
+    'lua print("EOL=[" .. vim.fn.getline(1) .. "]")')"
+  assert "<leader>p over the last word of a line puts it where the word was" contains "$out" "EOL=[foo X]"
+else
+  no "nvim did not resolve pbcopy/pbpaste to the shims; skipped every probe that would write a clipboard"
+  printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+fi
 
 echo
 echo "== nothing leaked into the real config or repo =="

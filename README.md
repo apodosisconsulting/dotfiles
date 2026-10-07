@@ -42,6 +42,7 @@ Prefix is `Ctrl-a`.
 | `f`         | Sessionizer popup                                  |
 | `w`         | Session/window tree overview                       |
 | `Backspace` | Clear screen and scrollback                        |
+| `]`         | Paste the system clipboard                         |
 
 ## Session persistence
 
@@ -95,6 +96,17 @@ Leader is `Space`.
 | `<leader>lq` | Send diagnostics to quickfix |
 | `<leader>9s` | 99 AI search                 |
 | `<leader>9v` | 99 AI visual replace         |
+
+## One clipboard
+
+Neovim and tmux both use the system clipboard, the one Cmd-C and Cmd-V use. In
+Neovim a plain `y` copies to it and `p` pastes from it. So does a delete, which
+is the cost: `<leader>d` deletes without touching it, and `<leader>p` pastes
+over a selection without replacing it. In tmux, copy mode's `y`, Enter and a
+mouse drag all copy to it, and prefix `]` pastes from it rather than from tmux's
+own buffer. The shell's own cut and paste keys (Ctrl-U, Ctrl-W, Ctrl-Y) still
+use zsh's separate kill ring, deliberately: clearing a line would otherwise
+overwrite the clipboard.
 
 ## Make targets
 

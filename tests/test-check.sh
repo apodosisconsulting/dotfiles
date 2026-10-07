@@ -221,6 +221,31 @@ mutate "a Shift-bearing restore key without the extkeys feature is caught" "rest
 mutate "no @resurrect-restore at all fails rather than passing vacuously" "restore is bound to" \
   sed -i '' '/^set -g @resurrect-restore/d' tmux/.config/tmux/tmux.conf
 
+# The defect this exists for: Enter and a mouse drag copying into tmux's own
+# buffer, which is a second clipboard.
+mutate "no copy-command, so a tmux copy stays in tmux, is caught" "tmux copies to and pastes from" \
+  sed -i '' '/^set -s copy-command/d' tmux/.config/tmux/tmux.conf
+
+mutate "a copy-command other than pbcopy is caught" "tmux copies to and pastes from" \
+  sed -i '' "s/^set -s copy-command 'pbcopy'$/set -s copy-command 'cat'/" tmux/.config/tmux/tmux.conf
+
+# A command after copy-pipe-and-cancel overrides copy-command for that key.
+mutate "a y binding with its own pipe command is caught" "tmux copies to and pastes from" \
+  sed -i '' 's/^bind -T copy-mode-vi y send-keys -X copy-pipe-and-cancel$/bind -T copy-mode-vi y send-keys -X copy-pipe-and-cancel "cat >\/dev\/null"/' tmux/.config/tmux/tmux.conf
+
+mutate "prefix ] left on tmux's own buffer is caught" "tmux copies to and pastes from" \
+  sed -i '' '/^bind \] /d' tmux/.config/tmux/tmux.conf
+
+# Last write wins in tmux.conf too: a later override is the one tmux applies.
+mutate "a later copy-command overriding pbcopy is caught" "tmux copies to and pastes from" \
+  bash -c "printf '\nset -s copy-command '\''cat'\''\n' >> tmux/.config/tmux/tmux.conf"
+
+mutate "a later y rebinding with its own command is caught" "tmux copies to and pastes from" \
+  bash -c "printf '\nbind -T copy-mode-vi y send-keys -X copy-pipe-and-cancel \"cat\"\n' >> tmux/.config/tmux/tmux.conf"
+
+mutate "a prefix ] that never reads pbpaste is caught" "tmux copies to and pastes from" \
+  sed -i '' 's/^bind \] run-shell "pbpaste | /bind ] run-shell "cat \/dev\/null | /' tmux/.config/tmux/tmux.conf
+
 mutate "an untracked lazy-lock.json is caught" "lazy-lock" \
   git rm -q --cached nvim/.config/nvim/lazy-lock.json
 
@@ -258,6 +283,18 @@ mutate "textwidth set to something else elsewhere in the lua config is caught" "
 
 mutate "an unreadable textwidth fails rather than passing vacuously" "textwidth is 80" \
   sed -i '' '/^vim\.opt\.textwidth/d' nvim/.config/nvim/lua/rich/options.lua
+
+# The defect this exists for: a yank that stays in a register only this nvim
+# can see, so there are two clipboards again.
+mutate "a clipboard that is not unnamedplus is caught" "nvim uses the system clipboard" \
+  sed -i '' 's/^vim\.opt\.clipboard = "unnamedplus"$/vim.opt.clipboard = ""/' nvim/.config/nvim/lua/rich/options.lua
+
+# Last write wins, as with wrap and textwidth.
+mutate "the clipboard changed again elsewhere in the lua config is caught" "nvim uses the system clipboard" \
+  bash -c 'printf "\nvim.opt.clipboard = \"\"\n" >> nvim/.config/nvim/lua/rich/keymaps.lua'
+
+mutate "an unreadable clipboard setting fails rather than passing vacuously" "nvim uses the system clipboard" \
+  sed -i '' '/^vim\.opt\.clipboard/d' nvim/.config/nvim/lua/rich/options.lua
 
 mutate_machine "a tmux.conf path that does not exist is caught" "every path the configs hardcode" \
   sed -i '' 's|~/.local/bin/tmux-clear-scrollback|~/.local/bin/does-not-exist|' tmux/.config/tmux/tmux.conf

@@ -50,12 +50,26 @@ awk '
   { print }
 ' "$CONF" >"$TEST_CONF"
 
+# The system clipboard, shimmed. tmux.conf sends every copy-mode copy to
+# copy-command and prefix+] reads pbpaste, both by name -- and its
+# set-environment -g PATH replaces the PATH tmux's jobs see outright, so a shim
+# on this shell's PATH would never be found. build_server puts it back in front
+# after sourcing. Without that, pressing y here would overwrite the clipboard of
+# whoever ran the suite, and ] would paste it into a test pane.
+CLIP_BIN="$TEST_TMP/clip-bin"
+CLIP_FILE="$TEST_TMP/clipboard"
+mkdir -p "$CLIP_BIN"
+printf '#!/bin/sh\ncat >"%s"\n' "$CLIP_FILE" >"$CLIP_BIN/pbcopy"
+printf '#!/bin/sh\ncat "%s" 2>/dev/null\n' "$CLIP_FILE" >"$CLIP_BIN/pbpaste"
+chmod +x "$CLIP_BIN/pbcopy" "$CLIP_BIN/pbpaste"
+
 # A server carrying the real bindings, pointed at scratch storage.
 build_server() {
   t kill-server 2>/dev/null
   sleep 0.4
   t -f /dev/null new-session -d -s work -c "$TEST_TMP/work" || return 1
   t source-file "$TEST_CONF" || return 1
+  t set-environment -g PATH "$CLIP_BIN:$(t show-environment -g PATH | cut -d= -f2-)" || return 1
   # After sourcing, so the bindings write here and not to the real save dir.
   t set -g @resurrect-dir "$RDIR"
   t set -g @continuum-save-interval 0 # no timer firing mid-test
@@ -250,6 +264,61 @@ assert "prefix+j switches to the other session" contains "$screen" "sesstwo"
 screen="$(press_keys_until sesstwo "sessone" C-a k)"
 assert "prefix+k switches back" contains "$screen" "sessone"
 
+# ---------------------------------------------------------------- clipboard
+
+echo
+echo "== copy-mode y copies to the system clipboard, and prefix+] pastes from it =="
+# y is the one copy binding tmux.conf declares. Enter and the mouse are tmux's
+# own bindings and reach pbcopy through the same copy-command, which is why the
+# config sets copy-command rather than giving y a command of its own.
+#
+# The shims are checked before anything is pressed: if a tmux job resolved the
+# real pbcopy, pressing y would overwrite the clipboard of whoever ran this.
+#
+# The pane prints the word to copy and then hands its input to cat, which writes
+# what is pasted into it to a file -- so what ] pasted is read from there rather
+# than scraped off a screen. The pane's terminal is in line mode, so cat only
+# receives a line once it ends: the clipboard text below ends in a newline for
+# that reason, and anything pasted before it without one arrives in front of it,
+# in the same line, which is how a stray paste of tmux's buffer would show.
+clipboard_is() { [ "$(cat "$CLIP_FILE" 2>/dev/null)" = "$1" ]; }
+pasted_has() { contains "$(cat "$TEST_TMP/pasted" 2>/dev/null)" "$1"; }
+pane_shows() { contains "$(t capture-pane -p -t clip 2>/dev/null)" "$1"; }
+
+build_server
+t new-session -d -s clip -c "$TEST_TMP/work" \
+  "printf 'COPYME please\n'; exec cat >'$TEST_TMP/pasted'"
+t run-shell "command -v pbcopy >'$TEST_TMP/resolved'; command -v pbpaste >>'$TEST_TMP/resolved'"
+if [ "$(tr '\n' ' ' <"$TEST_TMP/resolved" 2>/dev/null)" = "$CLIP_BIN/pbcopy $CLIP_BIN/pbpaste " ]; then
+  ok "tmux's jobs resolve pbcopy and pbpaste to this suite's shims"
+  assert "the pane shows the word to copy (guards a vacuous test)" wait_until 20 pane_shows COPYME
+
+  printf 'untouched' >"$CLIP_FILE"
+  # [ into copy mode, g to the top, 0 to column 0, v to start selecting, e to
+  # the end of the word, y to copy it.
+  press_keys clip C-a '[' g 0 v e y
+  assert "copy-mode y puts the selection on the system clipboard" \
+    wait_until 10 clipboard_is "COPYME"
+
+  # The y above left COPYME as tmux's newest buffer, which is exactly what
+  # tmux's default ] would paste. With the clipboard empty, ] must paste
+  # nothing at all -- not fall back to that buffer.
+  : >"$CLIP_FILE"
+  press_keys clip C-a ']'
+  printf 'from another app\n' >"$CLIP_FILE"
+  press_keys clip C-a ']'
+  assert "prefix+] pastes the system clipboard" \
+    wait_until 10 pasted_has "from another app"
+  # Read only after the second paste has landed. Had the empty-clipboard ]
+  # pasted tmux's buffer, that COPYME -- no newline of its own -- would be the
+  # start of the same line cat has just written.
+  refute "...and with the clipboard empty it pasted nothing, not tmux's newest buffer" \
+    pasted_has "COPYME"
+  refute "...and leaves no 'system' buffer behind" quietly t show-buffer -b system
+else
+  no "tmux's jobs did not resolve pbcopy/pbpaste to the shims; y and ] were NOT pressed"
+fi
+
 # ---------------------------------------------------------------- coverage
 
 echo
@@ -267,9 +336,8 @@ echo "== every binding is either pressed here or explained =="
 #   prefix+S   source-file: re-sources the config under the suite's feet
 #   prefix+H   mirror of L, which is covered
 #   prefix+C-a send-prefix: only observable by a program reading the pane
-#   copy-mode-vi v / y  need copy-mode plus a selection plus a clipboard
-undriven="w r R C f S H C-a v y"
-driven="Q q s M-s BSpace c h l L j k"
+undriven="w r R C f S H C-a"
+driven="Q q s M-s BSpace c h l L j k v y ]"
 # That these two lists between them cover every key tmux.conf binds is asserted
 # in checks/repo.sh, which reads them out of here and compares the SETS. It was
 # asserted here and compared the COUNTS — eleven plus ten against twenty-one

@@ -225,6 +225,33 @@ else
   ok "textwidth is 80 in options.lua and nothing in the lua config sets it to anything else"
 fi
 
+# One clipboard, and nothing later in the lua changing it back.
+#
+# Without unnamedplus a plain y lands in a register only this nvim can see, so
+# the machine has one clipboard and nvim another -- the thing that was asked to
+# stop. Same two halves as wrap and textwidth: the value in options.lua, and any
+# later write anywhere under nvim/.config/nvim, because lua's last write wins.
+# A write of "unnamedplus", double-quoted, is allowed, trailing comment or not;
+# any other spelling of it is reported, which errs loud. What neither
+# half can see is a plugin changing it at runtime, or a yank that does not
+# actually reach pbcopy; tests/test-nvim.sh yanks and pastes in a running nvim
+# against stand-in pbcopy and pbpaste for that.
+clip="$(nvim_opt clipboard)"
+otherclip="$(grep -rInE 'vim\.(opt|o|go|opt_global|opt_local)\.clipboard[[:space:]]*(=|:)|(set|setglobal|setlocal)[[:space:]]+clipboard' \
+  nvim/.config/nvim --include='*.lua' |
+  grep -vE '^[^:]*:[0-9]+:[[:space:]]*--' |
+  grep -vE '=[[:space:]]*"unnamedplus"[[:space:]]*(--.*)?$')"
+if [ -z "$clip" ]; then
+  bad "could not read vim.opt.clipboard out of $OPTIONS at all — the comparison would be vacuous"
+elif [ "$clip" != '"unnamedplus"' ]; then
+  bad "$OPTIONS sets clipboard = $clip, not \"unnamedplus\", so a plain y stays in a register the rest of the machine cannot see"
+elif [ -n "$otherclip" ]; then
+  bad "options.lua sets clipboard = \"unnamedplus\" and the lua config changes it again — the later write wins:"
+  printf '%s\n' "$otherclip" | sed 's/^/      /'
+else
+  ok "nvim uses the system clipboard (clipboard=unnamedplus) and nothing in the lua config changes it"
+fi
+
 section "tmux config"
 # Anchored to the set-option line, not to any mention: the comment above it
 # explains what usstyle is, so a bare `grep usstyle` stayed green after the
@@ -266,6 +293,45 @@ elif [ "$needs_ext" = yes ] && [ "$ext_feat" -eq 0 ]; then
   bad "@resurrect-restore is '$restore_key', but terminal-features never declares extkeys — tmux will not ask the terminal for the sequence that makes it distinct"
 else
   ok "restore is bound to '$restore_key', off the held-Ctrl path, with the extended-keys support that makes it a key the terminal can send"
+fi
+
+# One clipboard, from tmux's side.
+#
+# copy-command is what every argument-less copy-pipe runs -- y here, and tmux's
+# own Enter and mouse-drag bindings, which this file never names. Unset, those
+# copies stay in tmux's buffer unless the terminal happens to act on OSC 52. A
+# command written after y's copy-pipe-and-cancel overrides it for that key, so y
+# has to be bare. And tmux's default prefix+] pastes its OWN newest buffer, so
+# text copied in a browser never comes out of it; the binding has to read
+# pbpaste. tests/test-bindings.sh presses y and ] against stand-ins.
+#
+# The LAST of each is read, not the first: tmux applies a file top to bottom,
+# so a later copy-command or rebinding is the one that counts -- the same
+# last-write-wins shape the nvim checks above guard against. A copy-command
+# written with double quotes reads back as the whole line and fails, rather than
+# passing on a value nobody extracted.
+copy_cmd="$(grep -E '^[[:space:]]*set .*copy-command ' "$TMUXCONF" | tail -1 |
+  sed "s/.*copy-command '\([^']*\)'[[:space:]]*\(#.*\)*$/\1/")"
+y_line="$(grep -E '^[[:space:]]*bind(-key)?[[:space:]]+-T[[:space:]]+copy-mode-vi[[:space:]]+y[[:space:]]' "$TMUXCONF" | tail -1)"
+paste_line="$(grep -E '^[[:space:]]*bind(-key)?[[:space:]]+\][[:space:]]' "$TMUXCONF" | tail -1)"
+y_bare=0
+if printf '%s\n' "$y_line" |
+  grep -E '^[[:space:]]*bind(-key)?[[:space:]]+-T[[:space:]]+copy-mode-vi[[:space:]]+y[[:space:]]+send-keys[[:space:]]+-X[[:space:]]+copy-pipe-and-cancel[[:space:]]*(#.*)?$' >/dev/null; then
+  y_bare=1
+fi
+if [ -z "$copy_cmd" ]; then
+  bad "tmux.conf never sets copy-command — Enter and a mouse drag copy into tmux's own buffer, not the system clipboard"
+elif [ "$copy_cmd" != "pbcopy" ]; then
+  bad "tmux.conf sets copy-command '$copy_cmd', not 'pbcopy' — a tmux copy does not reach the system clipboard"
+elif [ "$y_bare" -eq 0 ]; then
+  bad "copy-mode-vi y is not a bare copy-pipe-and-cancel — a command after it overrides copy-command for y"
+elif [ -z "$paste_line" ]; then
+  bad "nothing binds prefix ], so it pastes tmux's own newest buffer instead of the system clipboard"
+else
+  case "$paste_line" in
+    *pbpaste*) ok "tmux copies to and pastes from the system clipboard (copy-command pbcopy, a bare y, prefix ] reads pbpaste)" ;;
+    *) bad "prefix ] is bound but never reads pbpaste, so it pastes something other than the system clipboard" ;;
+  esac
 fi
 
 # Continuum has no timer. It appends `#(continuum_save.sh)` to status-right and

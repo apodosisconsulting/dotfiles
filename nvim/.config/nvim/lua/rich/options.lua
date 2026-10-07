@@ -56,6 +56,27 @@ vim.opt.wrap = true
 -- buffer that never gets a filetype, for which FileType never fires.
 vim.opt.textwidth = 80
 
+-- One clipboard: the system's.
+--
+-- unnamedplus makes the unnamed register -- the one a plain y, d, c, x and p
+-- use -- the + register, which on macOS is pbcopy and pbpaste. The provider
+-- picks those on has('mac') alone, ahead of $TMUX and OSC 52 (see
+-- runtime/autoload/provider/clipboard.vim), so it is the same clipboard inside
+-- tmux as outside it, and the one Cmd-C and Cmd-V use.
+--
+-- The cost is that EVERY write to the unnamed register lands there: dd, x and
+-- ciw replace the clipboard as surely as y does. keymaps.lua keeps the two maps
+-- that go round that.
+--
+-- Set at startup, not inside vim.schedule the way kickstart.nvim does it. That
+-- deferral is for Linux, where choosing a provider can mean running a clipboard
+-- tool before the first screen draws; on macOS choosing one runs nothing, and
+-- startup measured the same either way. Deferring would cost something real:
+-- the option is still empty when `nvim --headless -c ...` runs its commands, so
+-- tests/test-nvim.sh would be asserting a config that is not the one in use.
+-- checks/repo.sh reads this line, and rejects a later write that changes it.
+vim.opt.clipboard = "unnamedplus"
+
 -- Scrolling: keep 12 lines visible above/below cursor
 vim.opt.scrolloff = 12
 
