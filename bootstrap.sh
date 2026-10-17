@@ -93,7 +93,8 @@ install_rust() {
     [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
   fi
 
-  # lsp.lua expects `rust-analyzer` on PATH (the rustup-managed proxy)
+  # lsp.lua runs rust-analyzer from $CARGO_HOME/bin (~/.cargo/bin) by path,
+  # not from PATH, where nvim finds Mason's first: this is the one it runs.
   if command -v rustup >/dev/null 2>&1; then
     log "Ensuring rust-analyzer component"
     rustup component add rust-analyzer >/dev/null 2>&1 ||

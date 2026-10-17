@@ -215,10 +215,24 @@ return {
             end,
         }
 
-        -- rust-analyzer: use the rustup-managed binary (not mason's),
-        -- enable all cargo features, run clippy on save
+        -- rust-analyzer: rustup's, with all cargo features, running clippy on
+        -- save.
+        --
+        -- rustup's by path, not by name. Mason puts its own bin dir first on
+        -- nvim's PATH, so a bare "rust-analyzer" ran Mason's build whenever
+        -- Mason had one, which it did although nothing here installs it:
+        -- 0.3.3081-standalone, where rustup's is 1.92.0, the toolchain's own.
+        -- rustup's is a proxy, so it runs the analyser of whichever toolchain
+        -- the project picks. bootstrap.sh installs it; where it is missing,
+        -- nvim starts no rust-analyzer rather than Mason's.
         vim.lsp.config.rust_analyzer = {
-            cmd = { "rust-analyzer" },
+            cmd = {
+                vim.fs.joinpath(
+                    vim.env.CARGO_HOME or vim.fs.normalize("~/.cargo"),
+                    "bin",
+                    "rust-analyzer"
+                ),
+            },
             filetypes = { "rust" },
             root_markers = { "Cargo.toml", "rust-project.json", ".git" },
             capabilities = capabilities,

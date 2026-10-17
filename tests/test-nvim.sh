@@ -577,6 +577,31 @@ else
 fi
 
 echo
+echo "== rust-analyzer is rustup's, not Mason's =="
+# Mason puts its bin dir first on nvim's PATH, so lsp.lua names rustup's proxy
+# by path; a bare "rust-analyzer" resolved to Mason's build wherever Mason had
+# one. exepath is how nvim itself decides the command can run. The second
+# probe points CARGO_HOME at a stand-in, which needs no rustup, so the path is
+# shown to follow it rather than to be ~/.cargo written in. The expected paths
+# go through tr -s / because vim.fs.joinpath drops a doubled slash, and
+# $TMPDIR on macOS ends in one.
+ra_probe='lua local c = vim.lsp.config.rust_analyzer.cmd print("RA_EXE=[" .. vim.fn.exepath(c[1]) .. "]")'
+cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+if [ -x "$cargo_bin/rust-analyzer" ]; then
+  out="$(nv "$SANDBOX/start.lua" "$ra_probe")"
+  assert "nvim runs rust-analyzer from $cargo_bin, rustup's" \
+    contains "$out" "RA_EXE=[$(printf '%s' "$cargo_bin/rust-analyzer" | tr -s /)]"
+else
+  printf '  \033[33mSKIP\033[0m  there is no rustup rust-analyzer in %s\n' "$cargo_bin"
+fi
+mkdir -p "$TEST_TMP/cargo/bin"
+printf '#!/bin/sh\n' >"$TEST_TMP/cargo/bin/rust-analyzer"
+chmod +x "$TEST_TMP/cargo/bin/rust-analyzer"
+out="$(CARGO_HOME="$TEST_TMP/cargo" nv "$SANDBOX/start.lua" "$ra_probe")"
+assert "...and from \$CARGO_HOME/bin when CARGO_HOME is set" \
+  contains "$out" "RA_EXE=[$(printf '%s' "$TEST_TMP/cargo/bin/rust-analyzer" | tr -s /)]"
+
+echo
 echo "== pyright resolves what a folder of loose scripts imports =="
 # lsp.lua gives pyright two things lspconfig does not: the file's own folder as
 # its root where no project marker is found, and the folder's .venv when no venv
