@@ -716,6 +716,22 @@ else
   assert "...rooted at the module" contains "$out" "GO_MOD_ROOT_IS_MODULE=true"
   assert "...completes a standard library member, strings.ToUpper" contains "$out" "GO_MOD_COMPLETES_STDLIB=true"
   assert "...and reports the compiler's unused-variable error" contains "$out" "GO_MOD_DIAGNOSES=true"
+  assert "staticcheck is on in the settings gopls was started with" contains "$out" "GO_STATICCHECK=true"
+  assert "...and reports S1002, which gopls's default subset leaves out" \
+    contains "$out" "GO_STATICCHECK_S1002=true"
+  assert "...but not ST1000, which staticcheck itself leaves off" contains "$out" "GO_STATICCHECK_NO_ST1000=true"
+  assert "...nor ST1003, which it leaves off too" contains "$out" "GO_STATICCHECK_NO_ST1003=true"
+  go_api="$(printf '%s' "$out" | sed -n 's/^GO_API_OPTIONS=\([0-9]*\).*/\1/p' | head -1)"
+  go_sent="$(printf '%s' "$out" | sed -n 's/^GO_SETTINGS_SENT=\([0-9]*\).*/\1/p' | head -1)"
+  printf '    %s gopls settings sent, checked against the %s options gopls api-json lists\n' \
+    "${go_sent:-0}" "${go_api:-0}"
+  # Both counts default to 0, which neither assertion accepts.
+  assert "gopls api-json was read (guards a vacuous pass)" [ "${go_api:-0}" -gt 0 ]
+  assert "...and lsp.lua sends settings for it to judge" [ "${go_sent:-0}" -gt 0 ]
+  assert "every gopls setting lsp.lua sends is a name gopls knows" contains "$out" "GO_SETTINGS_UNKNOWN=[]"
+  assert "inlay hints are off until asked for" contains "$out" "GO_HINTS_OFF_AT_START=true"
+  assert "<leader>lh turns them on" contains "$out" "GO_HINTS_TOGGLED_ON=true"
+  assert "...and gopls sends the parameter-name hints lsp.lua asks for" contains "$out" "GO_HINTS_DRAWN=true"
   assert "gopls attaches in a folder of loose .go files with no go.mod" contains "$out" "GO_LOOSE_ATTACHED=true"
   assert "...rooted at that folder" contains "$out" "GO_LOOSE_ROOT_IS_FILE_DIR=true"
   assert "...flags a call to a function no file defines yet (guards a vacuous pass)" \
@@ -873,7 +889,7 @@ echo "== the whole set of leader mappings, by name =="
 # When this fails it is usually not a bug: you added or removed a mapping and
 # this is the line that records it. Update the list and the diff says which key
 # changed, which is the point.
-EXPECTED_LEADER_N="<leader>9s,<leader>9x,<leader>Q,<leader>Y,<leader>ca,<leader>cf,<leader>d,<leader>e,<leader>fb,<leader>fd,<leader>ff,<leader>fg,<leader>fh,<leader>fo,<leader>fr,<leader>fs,<leader>gs,<leader>h1,<leader>h2,<leader>h3,<leader>h4,<leader>ha,<leader>hh,<leader>hr,<leader>ld,<leader>lq,<leader>q,<leader>rn,<leader>s,<leader>tt,<leader>u,<leader>w,<leader>x,<leader>y"
+EXPECTED_LEADER_N="<leader>9s,<leader>9x,<leader>Q,<leader>Y,<leader>ca,<leader>cf,<leader>d,<leader>e,<leader>fb,<leader>fd,<leader>ff,<leader>fg,<leader>fh,<leader>fo,<leader>fr,<leader>fs,<leader>gs,<leader>h1,<leader>h2,<leader>h3,<leader>h4,<leader>ha,<leader>hh,<leader>hr,<leader>ld,<leader>lh,<leader>lq,<leader>q,<leader>rn,<leader>s,<leader>tt,<leader>u,<leader>w,<leader>x,<leader>y"
 
 # Visual mode as well as normal, because they are declared separately and go
 # missing separately: <leader>9v is visual-only, so the normal-mode list above

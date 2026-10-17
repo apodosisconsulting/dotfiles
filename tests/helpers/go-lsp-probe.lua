@@ -2,7 +2,11 @@
 --
 -- Each question in a folder this probe builds under tempname():
 --   mod/      a module (go.mod): gopls roots there, completes strings.ToUpper
---             and reports an unused variable, the compiler's own error
+--             and reports an unused variable, the compiler's own error; every
+--             setting lsp.lua passes is one gopls knows; <leader>lh draws its
+--             inlay hints
+--   mod/store a package where staticcheck reports S1002, and does not report
+--             the style checks staticcheck itself leaves off (ST1000, ST1003)
 --   loose/    .go files and no go.mod: gopls roots at the folder, so a file
 --             created beside main.go after it was opened is seen
 --   home/     a .go directly in $HOME still gets no root at all
@@ -126,6 +130,7 @@ vim.fn.writefile({
     "",
     "func main() {",
     '\tx := strings.ToUpper("a")',
+    '\t_ = strings.Repeat("a", 3)',
     "}",
 }, mod .. "/main.go")
 local buf, client = open(mod .. "/main.go")
@@ -140,6 +145,102 @@ if client then
             return has_diag(buf, "declared and not used: x")
         end, 100)
     )
+
+    local settings = (client.settings or {}).gopls or {}
+    emit("GO_STATICCHECK", settings.staticcheck)
+
+    -- gopls warns about a setting it does not know and otherwise goes on
+    -- without it, so a misspelt name reads as set and does nothing. Each name
+    -- lsp.lua sends, and each key of hints and analyses, has to be one this
+    -- gopls's own api-json lists.
+    local api = vim.system(
+        { vim.fn.stdpath("data") .. "/mason/bin/gopls", "api-json" },
+        { text = true }
+    )
+        :wait(20000)
+    -- luanil, or every JSON null (an option with no enum keys) is userdata.
+    local ok, json =
+        pcall(vim.json.decode, api.stdout or "", { luanil = { object = true, array = true } })
+    local known = {}
+    for _, o in ipairs(ok and json.Options and json.Options.User or {}) do
+        local keys = {}
+        for _, k in ipairs(o.EnumKeys and o.EnumKeys.Keys or {}) do
+            -- Enum keys are listed JSON-quoted: "\"ST1000\"".
+            keys[(k.Name:gsub('^"(.*)"$', "%1"))] = true
+        end
+        known[o.Name] = keys
+    end
+    local unknown = {}
+    for name, value in pairs(settings) do
+        if not known[name] then
+            unknown[#unknown + 1] = name
+        elseif type(value) == "table" and not vim.islist(value) then
+            for key in pairs(value) do
+                if not known[name][key] then
+                    unknown[#unknown + 1] = name .. "." .. key
+                end
+            end
+        end
+    end
+    table.sort(unknown)
+    emit("GO_API_OPTIONS", vim.tbl_count(known))
+    emit("GO_SETTINGS_SENT", vim.tbl_count(settings))
+    emit("GO_SETTINGS_UNKNOWN", "[" .. table.concat(unknown, ",") .. "]")
+
+    -- Off until asked for; then nvim asks gopls, which sends a hint naming
+    -- strings.Repeat's count parameter only if lsp.lua's hints reached it.
+    emit("GO_HINTS_OFF_AT_START", not vim.lsp.inlay_hint.is_enabled({ bufnr = buf }))
+    vim.api.nvim_feedkeys(vim.keycode("<leader>lh"), "mx", false)
+    emit("GO_HINTS_TOGGLED_ON", vim.lsp.inlay_hint.is_enabled({ bufnr = buf }))
+    emit(
+        "GO_HINTS_DRAWN",
+        vim.wait(15000, function()
+            for _, h in ipairs(vim.lsp.inlay_hint.get({ bufnr = buf })) do
+                local label = h.inlay_hint.label
+                label = type(label) == "table" and label[1] and label[1].value or label
+                if label == "count:" then
+                    return true
+                end
+            end
+            return false
+        end, 100)
+    )
+end
+
+-- 1b. staticcheck, in a package of its own: ST1000 is about a package with no
+-- package comment, and does not fire on package main.
+vim.fn.mkdir(mod .. "/store", "p")
+vim.fn.writefile({
+    "package store",
+    "",
+    "func GetUserId(b bool) int {",
+    "\tif b == true {",
+    "\t\treturn 1",
+    "\t}",
+    "\treturn 0",
+    "}",
+}, mod .. "/store/store.go")
+local sbuf, sclient = open(mod .. "/store/store.go")
+if sclient then
+    -- gopls puts a staticcheck check's name in the diagnostic's source.
+    local function code(c)
+        for _, d in ipairs(vim.diagnostic.get(sbuf)) do
+            if d.source == c or d.code == c then
+                return true
+            end
+        end
+        return false
+    end
+    -- S1002 is staticcheck's alone, and off in gopls's default subset, so its
+    -- arrival says staticcheck ran on this file. The style checks come from
+    -- the same pass; a few seconds of quiet after it lets them land too.
+    local seen = vim.wait(30000, function()
+        return code("S1002")
+    end, 100)
+    vim.wait(3000)
+    emit("GO_STATICCHECK_S1002", seen)
+    emit("GO_STATICCHECK_NO_ST1000", seen and not code("ST1000"))
+    emit("GO_STATICCHECK_NO_ST1003", seen and not code("ST1003"))
 end
 
 -- 2. A folder of loose files. util.go is there before main.go is opened;

@@ -49,6 +49,16 @@ return {
         -- (and clean up) its own hover map on attach and detach.
         { "<C-k>", vim.lsp.buf.signature_help, desc = "Signature help", mode = "i" },
         { "<leader>lq", vim.diagnostic.setqflist, desc = "Diagnostics to quickfix" },
+        -- Inlay hints start off, and this turns them on and off in every buffer
+        -- at once. Global rather than per buffer, so the key is there before
+        -- any server attaches; config() tells gopls which kinds to send.
+        {
+            "<leader>lh",
+            function()
+                vim.lsp.inlay_hint.enable(not vim.lsp.inlay_hint.is_enabled())
+            end,
+            desc = "Toggle inlay hints",
+        },
     },
 
     config = function()
@@ -302,6 +312,53 @@ return {
             -- was opened stayed "undefined: later" for the 15s it was watched.
             -- With the file's own folder as the root, it resolved.
             root_dir = marker_or_own_folder("gopls"),
+
+            -- Merged into lspconfig's, which turns on semanticTokens. Every
+            -- name here is one `gopls api-json` lists, and tests/test-nvim.sh
+            -- checks them against it.
+            settings = {
+                gopls = {
+                    -- All of staticcheck's analyzers. Left unset, gopls runs a
+                    -- subset its maintainers picked for speed, which in a
+                    -- package written to trip them missed SA5000 (assigning to
+                    -- a nil map), S1002 (if b == true) and ST1005 (an error
+                    -- string with a capital and a full stop).
+                    staticcheck = true,
+                    -- But true also brought in the style checks staticcheck
+                    -- itself leaves off: its documented default is "all" less
+                    -- SA9003, ST1000, ST1003, ST1016 and ST1020 to ST1023.
+                    -- ST1000 alone flagged every package that had no package
+                    -- comment. Off again, so this is staticcheck as it runs on
+                    -- its own. gopls's own off-by-default analyzers, shadow
+                    -- among them, stay off.
+                    analyses = {
+                        SA9003 = false,
+                        ST1000 = false,
+                        ST1003 = false,
+                        ST1016 = false,
+                        ST1020 = false,
+                        ST1021 = false,
+                        ST1022 = false,
+                        ST1023 = false,
+                    },
+                    -- Every kind of inlay hint gopls has. None is drawn until
+                    -- <leader>lh turns hints on, which is why all of them can
+                    -- be: parameter names at a call, the type a := or a range
+                    -- infers, a composite literal's field names and type, a
+                    -- constant's value, a generic call's type arguments, and
+                    -- an error being dropped.
+                    hints = {
+                        assignVariableTypes = true,
+                        compositeLiteralFields = true,
+                        compositeLiteralTypes = true,
+                        constantValues = true,
+                        functionTypeParameters = true,
+                        ignoredError = true,
+                        parameterNames = true,
+                        rangeVariableTypes = true,
+                    },
+                },
+            },
         }
 
         -- yamlls: schema validation for docker-compose, k8s, CI configs, etc.
