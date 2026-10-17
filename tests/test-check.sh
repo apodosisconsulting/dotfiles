@@ -508,6 +508,17 @@ mutate "_comp_options assigned again after the append is caught" "Tab still offe
 mutate "no findable compinit fails the _comp_options order rather than passing vacuously" "Tab still offers dotfiles" \
   sed -i '' 's/^\([[:space:]]*\)compinit/\1: compinit/' zsh/.zshrc
 
+# The defect this exists for: no matcher-list, so cd de<Tab> misses Desktop.
+mutate "no case-insensitive matcher-list is caught" "Tab matches either case" \
+  sed -i '' "/^zstyle ':completion:\*' matcher-list /d" zsh/.zshrc
+
+# Last write wins: a later zstyle that empties the list or deletes it.
+mutate "a later empty matcher-list is caught" "Tab matches either case" \
+  bash -c "printf '\nzstyle %s matcher-list %s\n' \"':completion:*'\" \"''\" >> zsh/.zshrc"
+
+mutate "a later zstyle -d of the matcher-list is caught" "Tab matches either case" \
+  bash -c "printf '\nzstyle -d %s matcher-list\n' \"':completion:*'\" >> zsh/.zshrc"
+
 # The defect this exists for: a starship forked before every prompt to draw an
 # empty right prompt.
 mutate "starship's RPROMPT left in place is caught" "clears RPROMPT after starship init" \

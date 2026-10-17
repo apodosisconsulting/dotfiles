@@ -119,6 +119,11 @@ autoload -Uz compinit
 # .git and .env with them. After compinit, which sets the list afresh.
 _comp_options+=(globdots)
 
+# Tab matches either case, so `cd de<Tab>` offers Desktop as well as dev. The
+# Mac's file system already ignores case (`ls desktop` lists Desktop), so a
+# prefix in the wrong case named the file everywhere except completion.
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
+
 # -------------------------
 # Environment
 # -------------------------

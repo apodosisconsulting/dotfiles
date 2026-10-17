@@ -367,6 +367,28 @@ else
 fi
 
 echo
+echo "== Tab matches either case =="
+# The Mac's file system ignores case, and .zshrc's matcher-list makes
+# completion agree: each letter typed matches itself in either case.
+CASES="$TEST_TMP/cases"
+mkdir -p "$CASES/Desktop" "$CASES/Documents" "$CASES/dev"
+if [ -z "$python_bin" ]; then
+  printf '  \033[33mSKIP\033[0m  %s\n' "no python3, so nothing can drive zle on a pseudo-terminal to press Tab"
+else
+  offered="$(complete_in "$comp_home" "$CASES" 'cd de')"
+  assert "cd de<Tab> offers dev (guards a vacuous capture)" contains "$offered" " dev "
+  assert "...and Desktop" contains "$offered" " Desktop "
+  refute "...but not Documents, which de does not begin in either case" \
+    contains "$offered" " Documents "
+  no_matcher="$(sed "/^zstyle ':completion:\*' matcher-list /d" "$ZSHRC" | rc_home no-matcher)"
+  refute "a copy of .zshrc without the matcher-list really is different" \
+    cmp -s "$ZSHRC" "$no_matcher/.zshrc"
+  offered="$(complete_in "$no_matcher" "$CASES" 'cd de')"
+  assert "...where Tab still offers dev" contains "$offered" " dev "
+  refute "...but not Desktop, so the test can fail" contains "$offered" " Desktop "
+fi
+
+echo
 echo "== no prompt runs a starship to draw an empty right prompt =="
 # starship's init sets RPROMPT to a second `starship prompt --right`, run before
 # every prompt. starship.toml has no right_format, so .zshrc clears RPROMPT

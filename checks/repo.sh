@@ -1022,6 +1022,22 @@ else
   ok "Tab still offers dotfiles: _comp_options gains globdots after compinit"
 fi
 
+# Tab matches either case, as the Mac's file system does, so `cd de<Tab>`
+# offers Desktop as well as dev. Every zstyle naming matcher-list is read and
+# the last one judged, so a later one that empties or deletes the list counts.
+matcher="$(grep -E '^[[:space:]]*zstyle[[:space:]].*[[:space:]]matcher-list([[:space:]]|$)' zsh/.zshrc 2>/dev/null | tail -1)"
+case "$matcher" in
+  '')
+    bad ".zshrc sets no completion matcher-list — Tab matches case exactly, so cd de<Tab> misses Desktop"
+    ;;
+  *"zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'"*)
+    ok "Tab matches either case: the last matcher-list is m:{a-zA-Z}={A-Za-z}"
+    ;;
+  *)
+    bad ".zshrc's last matcher-list line is not the case-insensitive one: $matcher"
+    ;;
+esac
+
 # starship's init sets RPROMPT to a `starship prompt --right` run before every
 # prompt, and draws nothing with it unless starship.toml has a right_format.
 # .zshrc clears RPROMPT after the init when there is none, so the two files
