@@ -39,12 +39,14 @@ if [[ -n ${HOMEBREW_PREFIX-} ]]; then
   path=($HOMEBREW_PREFIX/bin $HOMEBREW_PREFIX/sbin $path)
   fpath[1,0]=$HOMEBREW_PREFIX/share/zsh/site-functions
   export FPATH
-  # brew leaves a set MANPATH with a leading colon and path_helper with a
-  # trailing one and no repeats. The empty first and last elements are those
-  # two colons.
-  if [[ -n $MANPATH ]]; then
-    manpath=('' ${(u)manpath} '')
-    export MANPATH
+  # brew trims a set MANPATH's colons from both ends and puts one back in
+  # front, the empty element man reads as its default path. These are brew's
+  # own two expressions. The Homebrew this was written against also ran
+  # path_helper, which left a trailing colon and no repeats; 7.0.9 does not,
+  # and tests/test-zshrc.sh failed until this matched again.
+  if [[ -n ${MANPATH-} ]]; then
+    MANPATH=${MANPATH%"${MANPATH##*[!:]}"}
+    export MANPATH=:${MANPATH#"${MANPATH%%[!:]*}"}
   fi
   if [[ :${INFOPATH-}: != *:$HOMEBREW_PREFIX/share/info:* ]]; then
     export INFOPATH=$HOMEBREW_PREFIX/share/info:${INFOPATH-}
