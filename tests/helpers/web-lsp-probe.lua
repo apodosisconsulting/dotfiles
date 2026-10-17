@@ -62,7 +62,10 @@ end
 
 local dir = base .. "/loose"
 vim.fn.mkdir(dir, "p")
-vim.fn.writefile({ "export function greet(name) {", "  return `hi ${name}`;", "}" }, dir .. "/util.js")
+vim.fn.writefile(
+    { "export function greet(name) {", "  return `hi ${name}`;", "}" },
+    dir .. "/util.js"
+)
 vim.fn.writefile({ 'import { greet } from "./util.js";', 'greet("x");' }, dir .. "/main.js")
 vim.fn.writefile({ "body { colr: red; }" }, dir .. "/style.css")
 vim.fn.writefile({ "<!doctype html>", "<html><body>", "<" }, dir .. "/index.html")
@@ -196,7 +199,10 @@ emit(
         and vim.uv.fs_realpath(client.root_dir) == vim.uv.fs_realpath(dir)
 )
 emit("WEB_PHP_FLAGS_UNDEFINED_VARIABLE", client ~= nil and flags(buf, "Undefined variable"))
-emit("WEB_PHP_COMPLETES_SIBLING_CLASS", client ~= nil and completes(client, buf, 3, #"echo $g->", "greet"))
+emit(
+    "WEB_PHP_COMPLETES_SIBLING_CLASS",
+    client ~= nil and completes(client, buf, 3, #"echo $g->", "greet")
+)
 
 -- A .php directly in $HOME must get no phpactor, or it would index the whole
 -- home directory. HOME points at a scratch folder only while :edit runs, which
