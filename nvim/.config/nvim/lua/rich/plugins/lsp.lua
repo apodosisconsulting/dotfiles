@@ -70,7 +70,6 @@ return {
                 "eslint",
                 "html",
                 "cssls",
-                "phpactor",
                 "jsonls",
                 "clangd",
                 "yamlls",
@@ -100,7 +99,7 @@ return {
 
         -- A root_dir for a server that needs one in a folder of loose files,
         -- where none of lspconfig's markers for it are found: the file's own
-        -- folder. pyright and phpactor each need it, for reasons given at each.
+        -- folder. pyright needs it, for the reason given there.
         local function marker_or_own_folder(server)
             return function(bufnr, on_dir)
                 -- Read off the merged config rather than copied here, so the
@@ -111,15 +110,14 @@ return {
                     return
                 end
 
-                -- Never ~ or /: both servers index everything under their root.
+                -- Never ~ or /: the server indexes everything under its root.
                 -- An unnamed buffer, or a folder that does not exist yet, has no
                 -- realpath and no root either. on_dir(nil) hands the choice back
-                -- to vim.lsp.start, which looks for the markers itself and finds
-                -- none: pyright then runs without a root, as it did before, and
-                -- phpactor, which lspconfig marks workspace_required, does not
-                -- start. Not calling on_dir at all would leave the buffer with
-                -- neither. realpath on both sides, because nvim resolves symlinks
-                -- in buffer names on macOS and $HOME need be neither resolved nor
+                -- to vim.lsp.start, which looks for the markers itself, finds
+                -- none, and runs the server without a root, as before. Not
+                -- calling on_dir at all would leave the buffer with no server.
+                -- realpath on both sides, because nvim resolves symlinks in
+                -- buffer names on macOS and $HOME need be neither resolved nor
                 -- slash-free.
                 local name = vim.api.nvim_buf_get_name(bufnr)
                 local dir = name ~= "" and vim.fs.dirname(name) or nil
@@ -212,20 +210,6 @@ return {
         vim.lsp.config.cssls = { capabilities = capabilities }
         vim.lsp.config.html = { capabilities = capabilities }
 
-        -- phpactor, for PHP. lspconfig marks it workspace_required, with .git,
-        -- composer.json and .phpactor.json/.yml as the markers, so in a folder
-        -- of loose .php files -- which is how PHP usually starts -- phpactor
-        -- never started at all: no completion, no diagnostics, and nothing to
-        -- say why. Rooted at the file's own folder instead, `$g->` completes
-        -- greet() from the Greeter.php beside it, and an undefined variable is
-        -- flagged. A .php directly in ~ still gets no phpactor, deliberately.
-        -- tests/test-nvim.sh checks both. phpactor is a PHP program, run by the
-        -- php first on PATH, which bootstrap.sh installs.
-        vim.lsp.config.phpactor = {
-            capabilities = capabilities,
-            root_dir = marker_or_own_folder("phpactor"),
-        }
-
         vim.lsp.config.jsonls = { capabilities = capabilities }
         vim.lsp.config.clangd = { capabilities = capabilities }
         vim.lsp.config.gopls = { capabilities = capabilities }
@@ -251,7 +235,6 @@ return {
             "eslint",
             "html",
             "cssls",
-            "phpactor",
             "jsonls",
             "clangd",
             "gopls",

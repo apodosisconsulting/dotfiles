@@ -543,18 +543,13 @@ else
 fi
 
 echo
-echo "== JavaScript, CSS, HTML and PHP each get a working language server =="
-# One folder of loose files with no project marker above it, and for each file
-# the server lsp.lua names, asked to do one thing only a working server can.
-# tests/helpers/web-lsp-probe.lua builds it and prints KEY=value lines.
-#
-# PHP is the one lsp.lua had to change rather than just list: phpactor is
-# workspace_required, so in a folder like this one it never started at all
-# until the file's own folder became its root. Its first assertion is the one
-# that fails without that, and the last proves ~ is still excluded.
+echo "== JavaScript, CSS and HTML each get a working language server =="
+# A file of each kind, and for each the server lsp.lua names, asked to do one
+# thing only a working server can. tests/helpers/web-lsp-probe.lua builds them
+# and prints KEY=value lines.
 #
 # Not nv(), for the reasons given at the pyright probe above.
-out="$(TMPDIR="$TEST_TMP" PATH="$CLIP_BIN:$PATH" XDG_STATE_HOME="$STATE" \
+out="$(TMPDIR="$TEST_TMP" PATH="$CLIP_BIN:$PATH" XDG_STATE_HOME="$STATE" XDG_CACHE_HOME="$CACHE" \
   nvim --headless -c "luafile $REPO_ROOT/tests/helpers/web-lsp-probe.lua" 2>&1)"
 web_server() { # $1 = probe key, $2 = server; true when the probe could run it
   if contains "$out" "$1=SKIP"; then
@@ -562,32 +557,17 @@ web_server() { # $1 = probe key, $2 = server; true when the probe could run it
     return 1
   fi
 }
-if contains "$out" "WEB_NO_MARKER_ABOVE=false"; then
-  printf '  \033[33mSKIP\033[0m  a phpactor root marker sits above %s, so the no-marker case cannot be set up\n' "$TEST_TMP"
-else
-  if web_server WEB_JS ts_ls; then
-    assert "ts_ls attaches to a .js file" contains "$out" "WEB_JS_ATTACHED=true"
-    assert "...and finds the definition in the module it imports" contains "$out" "WEB_JS_DEFINITION=true"
-  fi
-  if web_server WEB_CSS cssls; then
-    assert "cssls attaches to a .css file" contains "$out" "WEB_CSS_ATTACHED=true"
-    assert "...and flags a misspelt property" contains "$out" "WEB_CSS_FLAGS_UNKNOWN_PROPERTY=true"
-  fi
-  if web_server WEB_HTML html; then
-    assert "html attaches to a .html file" contains "$out" "WEB_HTML_ATTACHED=true"
-    assert "...and completes an element name" contains "$out" "WEB_HTML_COMPLETES_ELEMENT=true"
-  fi
-  # SKIP covers php being absent too: phpactor is a PHP program.
-  if web_server WEB_PHP "phpactor (or php)"; then
-    assert "phpactor attaches to a .php file in a folder with no root marker" \
-      contains "$out" "WEB_PHP_ATTACHED=true"
-    assert "the file's own folder becomes phpactor's root" contains "$out" "WEB_PHP_ROOT_IS_FILE_DIR=true"
-    assert "...and it flags an undefined variable" contains "$out" "WEB_PHP_FLAGS_UNDEFINED_VARIABLE=true"
-    assert "...and completes a method of the class in the file beside it" \
-      contains "$out" "WEB_PHP_COMPLETES_SIBLING_CLASS=true"
-    assert "a .php directly in HOME gets no phpactor, which would index all of it" \
-      contains "$out" "WEB_PHP_HOME_GETS_NONE=true"
-  fi
+if web_server WEB_JS ts_ls; then
+  assert "ts_ls attaches to a .js file" contains "$out" "WEB_JS_ATTACHED=true"
+  assert "...and finds the definition in the module it imports" contains "$out" "WEB_JS_DEFINITION=true"
+fi
+if web_server WEB_CSS cssls; then
+  assert "cssls attaches to a .css file" contains "$out" "WEB_CSS_ATTACHED=true"
+  assert "...and flags a misspelt property" contains "$out" "WEB_CSS_FLAGS_UNKNOWN_PROPERTY=true"
+fi
+if web_server WEB_HTML html; then
+  assert "html attaches to a .html file" contains "$out" "WEB_HTML_ATTACHED=true"
+  assert "...and completes an element name" contains "$out" "WEB_HTML_COMPLETES_ELEMENT=true"
 fi
 # The tokens vanish as a set when the probe dies; say what nvim said instead.
 if ! contains "$out" "WEB_PROBE_DONE=true"; then

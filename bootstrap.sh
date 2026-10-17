@@ -51,7 +51,6 @@ brew_install_pkgs() {
     fd
     node
     go
-    php # phpactor, the PHP language server in lsp.lua, is a PHP program
     docker
     starship
     fzf

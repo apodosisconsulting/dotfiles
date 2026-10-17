@@ -1,16 +1,11 @@
--- What lsp.lua claims for JavaScript, CSS, HTML and PHP, asked of the servers.
+-- What lsp.lua claims for JavaScript, CSS and HTML, asked of the servers.
 --
--- One folder this probe builds under tempname(), with no project marker in it
--- or above it -- a folder of loose files, the way each of these usually starts.
--- For each file, the server lsp.lua names attaches AND does one thing only a
--- running server can, so a client that attached and then did nothing fails:
+-- One folder this probe builds under tempname(), holding a file of each kind.
+-- For each, the server lsp.lua names attaches AND does one thing only a running
+-- server can, so a client that attached and then did nothing fails:
 --   main.js     ts_ls finds greet's definition in the util.js beside it
 --   style.css   cssls flags `colr` as an unknown property
 --   index.html  html offers div as an element to open
---   index.php   phpactor is rooted at the file's own folder, completes greet()
---               from the Greeter.php beside it, and flags an undefined variable
--- and then a .php directly in $HOME gets no phpactor at all, since phpactor
--- indexes everything under its root.
 --
 -- Run as `nvim --headless -c 'luafile web-lsp-probe.lua'`. It cds into its own
 -- folder, deletes it on the way out and quits nvim itself. Every line it prints
@@ -51,15 +46,6 @@ vim.api.nvim_create_autocmd("VimLeave", {
     end,
 })
 
--- phpactor's markers, written out for the same reason pyright-probe.lua gives:
--- lspconfig is not loaded until a file is opened. If one sits above the temp
--- dir, phpactor would be rooted there and the probe would test that instead.
-local above = vim.fs.root(base, { ".git", "composer.json", ".phpactor.json", ".phpactor.yml" })
-emit("WEB_NO_MARKER_ABOVE", above == nil)
-if above then
-    return finish()
-end
-
 local dir = base .. "/loose"
 vim.fn.mkdir(dir, "p")
 vim.fn.writefile(
@@ -69,19 +55,6 @@ vim.fn.writefile(
 vim.fn.writefile({ 'import { greet } from "./util.js";', 'greet("x");' }, dir .. "/main.js")
 vim.fn.writefile({ "body { colr: red; }" }, dir .. "/style.css")
 vim.fn.writefile({ "<!doctype html>", "<html><body>", "<" }, dir .. "/index.html")
-vim.fn.writefile({
-    "<?php",
-    "class Greeter {",
-    '    public function greet(string $name): string { return "hi $name"; }',
-    "}",
-}, dir .. "/Greeter.php")
-vim.fn.writefile({
-    "<?php",
-    "require_once __DIR__ . '/Greeter.php';",
-    "$g = new Greeter();",
-    'echo $g->greet("x");',
-    "echo $undefinedVar;",
-}, dir .. "/index.php")
 
 -- By path rather than on PATH: mason puts its bin dir on PATH when it loads,
 -- and nothing has loaded it yet.
@@ -182,43 +155,5 @@ else
     emit("WEB_HTML_ATTACHED", client ~= nil)
     emit("WEB_HTML_COMPLETES_ELEMENT", client ~= nil and completes(client, buf, 2, 1, "div"))
 end
-
--- PHP.
-if not installed("phpactor") or vim.fn.executable("php") == 0 then
-    emit("WEB_PHP", "SKIP")
-    return finish()
-end
-local buf, client = open(dir .. "/index.php", "phpactor")
-emit("WEB_PHP_ATTACHED", client ~= nil)
--- Compared by realpath: nvim resolves symlinks in buffer names on macOS, and the
--- default $TMPDIR sits under one (/var -> /private/var).
-emit(
-    "WEB_PHP_ROOT_IS_FILE_DIR",
-    client ~= nil
-        and client.root_dir ~= nil
-        and vim.uv.fs_realpath(client.root_dir) == vim.uv.fs_realpath(dir)
-)
-emit("WEB_PHP_FLAGS_UNDEFINED_VARIABLE", client ~= nil and flags(buf, "Undefined variable"))
-emit(
-    "WEB_PHP_COMPLETES_SIBLING_CLASS",
-    client ~= nil and completes(client, buf, 3, #"echo $g->", "greet")
-)
-
--- A .php directly in $HOME must get no phpactor, or it would index the whole
--- home directory. HOME points at a scratch folder only while :edit runs, which
--- is when root_dir reads it. phpactor attaching to index.php above is what
--- makes the absence here mean something.
-local fakehome = base .. "/home"
-vim.fn.mkdir(fakehome, "p")
-vim.fn.writefile({ "<?php", "echo 1;" }, fakehome .. "/loose.php")
-local real_home = vim.env.HOME
-vim.env.HOME = fakehome
-local ok_edit = pcall(vim.cmd.edit, vim.fn.fnameescape(fakehome .. "/loose.php"))
-vim.env.HOME = real_home
-local hbuf = vim.api.nvim_get_current_buf()
-local attached = vim.wait(5000, function()
-    return #vim.lsp.get_clients({ bufnr = hbuf, name = "phpactor", _uninitialized = true }) > 0
-end, 50)
-emit("WEB_PHP_HOME_GETS_NONE", ok_edit and client ~= nil and not attached)
 
 finish()

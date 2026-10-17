@@ -389,7 +389,7 @@ mutate "an unreadable clipboard setting fails rather than passing vacuously" "nv
 # A server started and never installed: here it works, on a new machine it
 # never attaches. Only the ensure_installed copy of the name goes.
 mutate "a language server lsp.lua starts but Mason never installs is caught" "Mason installs every language server" \
-  sed -i '' '/ensure_installed = {/,/}/{/"phpactor",/d;}' nvim/.config/nvim/lua/rich/plugins/lsp.lua
+  sed -i '' '/ensure_installed = {/,/}/{/"eslint",/d;}' nvim/.config/nvim/lua/rich/plugins/lsp.lua
 
 # The reverse: installed, and running only because automatic_enable is on.
 mutate "a language server Mason installs but lsp.lua never starts is caught" "Mason installs every language server" \
