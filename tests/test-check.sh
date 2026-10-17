@@ -628,6 +628,11 @@ mutate "an update after the restore is caught" "at the commits lazy-lock.json pi
 mutate "CI never running restore at all is caught" "at the commits lazy-lock.json pins" \
   sed -i '' 's/"+Lazy! restore" +qa/+qa/' .github/workflows/ci.yml
 
+# Off the brew line only: the comment above it still names tree-sitter-cli,
+# and must not be what satisfies the check.
+mutate "CI without the tree-sitter CLI is caught" "CI installs tree-sitter-cli" \
+  sed -i '' 's/neovim tree-sitter-cli tmux/neovim tmux/' .github/workflows/ci.yml
+
 # ------------------------------------- assertions that could pass while being wrong
 
 # The old version of this compared COUNTS: renaming a binding kept the total at
@@ -696,6 +701,17 @@ mutate "no linters read out of lint.lua fails rather than passing vacuously" "fo
 # A filetype that yields no name is reported, not counted as nothing to install.
 mutate "a filetype whose formatters are not a list of names is caught" "formatters and linters the nvim config runs" \
   sed -i '' 's/lua = { "stylua" },/lua = function() return { "stylua" } end,/' nvim/.config/nvim/lua/rich/plugins/conform.lua
+
+# nvim-treesitter's main branch builds every parser with the CLI.
+mutate "a fresh machine without the tree-sitter CLI is caught" "bootstrap.sh installs tree-sitter-cli" \
+  sed -i '' '/^    tree-sitter-cli$/d' bootstrap.sh
+
+# The formula that looks right and is not: tree-sitter is the library alone.
+mutate "the tree-sitter library in the CLI's place is caught" "bootstrap.sh installs tree-sitter-cli" \
+  sed -i '' 's/^    tree-sitter-cli$/    tree-sitter/' bootstrap.sh
+
+mutate "a branch that cannot be read out of the lock fails rather than passing" "bootstrap.sh installs tree-sitter-cli" \
+  sed -i '' 's/"nvim-treesitter": { "branch": "main"/"nvim-treesitter": { "branch": ""/' nvim/.config/nvim/lazy-lock.json
 
 # ------------------------------------------- constants written down more than once
 

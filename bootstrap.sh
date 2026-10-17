@@ -46,6 +46,9 @@ brew_install_pkgs() {
     git-lfs
     stow
     neovim
+    # nvim-treesitter's main branch builds every parser with this CLI. The
+    # tree-sitter formula is now the library alone, without the command.
+    tree-sitter-cli
     tmux
     ripgrep
     fd

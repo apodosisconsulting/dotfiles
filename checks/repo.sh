@@ -1378,6 +1378,25 @@ else
   meh "nvim not installed, cannot read the formatters and linters the nvim config runs"
 fi
 
+# The tree-sitter CLI. nvim-treesitter's master branch compiled its parsers
+# with cc and needed nothing installed; main builds every one with this CLI,
+# and a fresh machine without it starts with no parsers at all. treesitter.lua
+# says so once nvim runs, which is after the machine was set up wrong. The
+# formula is tree-sitter-cli: plain tree-sitter is now the library alone, and
+# is the name that would look right here. The branch is the lock's, which is
+# what a fresh machine installs; JSON's last write wins, so the last line does.
+ts_branch="$(sed -n 's/^[[:space:]]*"nvim-treesitter": { "branch": "\([^"]*\)".*/\1/p' \
+  nvim/.config/nvim/lazy-lock.json | tail -n 1)"
+if [ -z "$ts_branch" ] || [ -z "$boot_pkgs" ]; then
+  bad "could not read nvim-treesitter's branch out of lazy-lock.json, or bootstrap's brew list — whether a fresh machine can build parsers goes unchecked"
+elif [ "$ts_branch" = master ]; then
+  ok "nvim-treesitter is pinned to master, which compiles its parsers without the tree-sitter CLI"
+elif grep -qxF tree-sitter-cli <<<"$boot_pkgs"; then
+  ok "bootstrap.sh installs tree-sitter-cli, which nvim-treesitter's $ts_branch branch builds every parser with"
+else
+  bad "nvim-treesitter is pinned to $ts_branch, which builds every parser with the tree-sitter CLI, and bootstrap.sh does not install tree-sitter-cli — a fresh machine gets no parsers"
+fi
+
 section "Git hooks"
 # A hook and a make target are two copies of one command, and everything that
 # DESCRIBES a hook — the README, the Makefile's own help, bootstrap.sh, the
@@ -1834,5 +1853,18 @@ else
     bad "CI never runs 'Lazy! restore', so nothing holds the plugins it tests to lazy-lock.json"
   else
     ok "CI primes the plugins with 'Lazy! restore', at the commits lazy-lock.json pins"
+  fi
+  # The same CLI on the runner, which installs Homebrew's neovim and so gets
+  # main. Without it the parsers are never built there, and the nvim suite
+  # skips its indent check rather than failing: green, and a check short.
+  ci_brew="$(grep -vE '^[[:space:]]*#' "$CI" | grep -E 'brew install')"
+  if [ -z "$ci_brew" ] || [ -z "$ts_branch" ]; then
+    bad "could not read CI's brew install, or nvim-treesitter's branch — whether CI can build parsers goes unchecked"
+  elif [ "$ts_branch" = master ]; then
+    ok "nvim-treesitter is pinned to master, which builds CI's parsers without the tree-sitter CLI"
+  elif ! grep -qwF tree-sitter-cli <<<"$ci_brew"; then
+    bad "CI does not install tree-sitter-cli, so nvim-treesitter's $ts_branch branch builds no parsers there"
+  else
+    ok "CI installs tree-sitter-cli, so the parsers nvim-treesitter's $ts_branch branch builds exist when the suites run"
   fi
 fi
