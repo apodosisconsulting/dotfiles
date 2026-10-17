@@ -595,7 +595,7 @@ echo "== each shellcheck finding in a shell script is reported once =="
 # comparing them as written would have found no duplicate at all. The write is
 # counted and at least one finding is required, so a probe that never wrote, or
 # a bashls that ran no shellcheck, cannot pass by finding nothing to repeat.
-if [ ! -x "$HOME/.local/share/nvim/mason/bin/bash-language-server" ]; then
+if [ ! -x "$NVIM_DATA/mason/bin/bash-language-server" ]; then
   printf '  \033[33mSKIP\033[0m  bash-language-server is not installed via mason\n'
 elif ! command -v shellcheck >/dev/null 2>&1; then
   printf '  \033[33mSKIP\033[0m  shellcheck is not on PATH, so bashls has no findings to report\n'

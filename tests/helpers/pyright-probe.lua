@@ -69,16 +69,21 @@ if above then
     return finish()
 end
 
--- publishDiagnostics, counted per file: "no missing-import diagnostic" means
--- nothing until pyright has reported on the file at least once.
+-- Reports, counted per file: "no missing-import diagnostic" means nothing until
+-- pyright has reported on the file at least once.
+--
+-- Counted on DiagnosticChanged, not in the publishDiagnostics handler. Neovim
+-- 0.12 pulls diagnostics from a server that offers textDocument/diagnostic,
+-- which pyright does, so there pyright never pushes, the handler never ran, and
+-- a file it had analysed read as never reported. vim.diagnostic.set fires the
+-- event for a push and a pull alike, an empty result included, in 0.11 and 0.12.
 local published = {}
-local orig = vim.lsp.handlers["textDocument/publishDiagnostics"]
-vim.lsp.handlers["textDocument/publishDiagnostics"] = function(err, res, ctx, cfg)
-    if res and res.uri then
-        published[res.uri] = (published[res.uri] or 0) + 1
-    end
-    return orig(err, res, ctx, cfg)
-end
+vim.api.nvim_create_autocmd("DiagnosticChanged", {
+    callback = function(ev)
+        local uri = vim.uri_from_bufnr(ev.buf)
+        published[uri] = (published[uri] or 0) + 1
+    end,
+})
 
 local function client_of(buf)
     local c = vim.lsp.get_clients({ bufnr = buf, name = "pyright" })[1]
