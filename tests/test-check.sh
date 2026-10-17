@@ -405,6 +405,17 @@ mutate "smartcase turned off by a :set noscs elsewhere is caught" "search ignore
 mutate "an unreadable smartcase setting fails rather than passing vacuously" "search ignores case unless the pattern has a capital" \
   sed -i '' '/^vim\.opt\.smartcase/d' nvim/.config/nvim/lua/rich/options.lua
 
+# The defect this exists for: <leader>q and <leader>Q refusing again.
+mutate "confirm turned off, so closing an unsaved buffer fails, is caught" "asks to save (confirm)" \
+  sed -i '' 's/^vim\.opt\.confirm = true$/vim.opt.confirm = false/' nvim/.config/nvim/lua/rich/options.lua
+
+# Last write wins, under the short name too.
+mutate "confirm turned off by a :set nocf elsewhere is caught" "asks to save (confirm)" \
+  bash -c 'printf "\nvim.cmd(\"set nocf\")\n" >> nvim/.config/nvim/lua/rich/keymaps.lua'
+
+mutate "an unreadable confirm setting fails rather than passing vacuously" "asks to save (confirm)" \
+  sed -i '' '/^vim\.opt\.confirm/d' nvim/.config/nvim/lua/rich/options.lua
+
 # A server started and never installed: here it works, on a new machine it
 # never attaches. Only the ensure_installed copy of the name goes.
 mutate "a language server lsp.lua starts but Mason never installs is caught" "Mason installs every language server" \

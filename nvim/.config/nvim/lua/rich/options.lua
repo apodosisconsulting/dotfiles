@@ -112,6 +112,18 @@ vim.opt.backup = false
 vim.opt.undodir = vim.fn.stdpath("state") .. "/undo"
 vim.opt.undofile = true
 
+-- Ask about unsaved changes rather than refusing.
+--
+-- <leader>q (:bd) and <leader>Q (:qa) on a modified buffer stopped with E89 or
+-- E37, "No write since last change", and did nothing. With confirm they ask
+-- instead -- Save changes to "file"? [Y]es, (N)o, (C)ancel -- so the same key
+-- saves and closes, and only (N)o throws the changes away. A command with a !
+-- still discards without asking. A headless nvim has no UI to ask on and takes
+-- the default answer, Yes, so a script that runs :bd or :qa on a modified
+-- buffer now writes it; the test suites quit with qa!, which never asks.
+-- checks/repo.sh reads this line, and rejects a later write that changes it.
+vim.opt.confirm = true
+
 -- Show absolute line numbers in insert mode (easier to reference specific lines)
 -- and relative numbers in normal mode (easier for jump counts like 5j)
 local augroup = vim.api.nvim_create_augroup("rich-options", { clear = true })

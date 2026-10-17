@@ -386,6 +386,29 @@ else
   ok "search ignores case unless the pattern has a capital (ignorecase, smartcase), as Telescope's grep does, and nothing in the lua config changes that"
 fi
 
+# Closing or quitting with unsaved changes asks, rather than refusing.
+#
+# <leader>q is :bd and <leader>Q is :qa, and on a modified buffer both stopped
+# with E89 or E37 and did nothing; 'confirm' turns that into a Save, No or
+# Cancel prompt. Same two halves as the options above, under the long name or
+# cf. confirm() and cmp's mapping.confirm are calls, not the option, and the
+# pattern needs a vim.<scope>. or a :set in front of the name to match.
+confirm="$(nvim_opt confirm)"
+otherconfirm="$(grep -rInE "vim\.(opt|o|go|opt_global|opt_local)\.(confirm|cf)[[:space:]]*(=|:)|(set|setglobal|setlocal)[[:space:](\"']+(no|inv)?(confirm|cf)([^[:alnum:]_(]|$)" \
+  nvim/.config/nvim --include='*.lua' |
+  grep -vE '^[^:]*:[0-9]+:[[:space:]]*--' |
+  grep -vE '\.confirm[[:space:]]*=[[:space:]]*true[[:space:]]*(--.*)?$')"
+if [ -z "$confirm" ]; then
+  bad "could not read vim.opt.confirm out of $OPTIONS at all — the comparison would be vacuous"
+elif [ "$confirm" != "true" ]; then
+  bad "$OPTIONS sets confirm = $confirm, so <leader>q and <leader>Q on an unsaved buffer stop with E89 or E37 instead of offering to save"
+elif [ -n "$otherconfirm" ]; then
+  bad "options.lua sets confirm = true and the lua config changes it again — the later write wins:"
+  printf '%s\n' "$otherconfirm" | sed 's/^/      /'
+else
+  ok "closing or quitting with unsaved changes asks to save (confirm) rather than failing, and nothing in the lua config changes that"
+fi
+
 # Every language server Mason installs is one lsp.lua starts, and the reverse.
 #
 # They are two lists in lsp.lua with nothing holding them together. A server
