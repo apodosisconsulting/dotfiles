@@ -417,6 +417,20 @@ mutate "a count named only in a trailing comment is caught" "take a count" \
 mutate "no diagnostic jump to read fails rather than passing vacuously" "take a count" \
   sed -i '' 's/vim\.diagnostic\.jump(/vim.diagnostic.goto(/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
 
+# The defect this exists for, replayed: Enter taking the first, unselected
+# completion and swallowing the newline.
+mutate "an Enter that accepts the first, unselected completion is caught" "Enter in the completion menu" \
+  sed -i '' 's/\["<CR>"\] = cmp\.mapping\.confirm({ select = false })/["<CR>"] = cmp.mapping.confirm({ select = true })/' nvim/.config/nvim/lua/rich/plugins/cmp.lua
+
+# A second mapping table replaces the key for its buffers, so the one in
+# cmp.lua is not the whole story. Spelled the other way round on purpose:
+# lower case, and cmp reached through require rather than a local.
+mutate "Enter remapped to accept-first in a second cmp table is caught" "Enter in the completion menu" \
+  bash -c 'printf "\nrequire(\"cmp\").setup.filetype(\"markdown\", { mapping = { [\"<cr>\"] = require(\"cmp\").mapping.confirm({ select = true }) } })\n" >> nvim/.config/nvim/lua/rich/keymaps.lua'
+
+mutate "no Enter mapping to read fails rather than passing vacuously" "Enter in the completion menu" \
+  sed -i '' '/\["<CR>"\] = cmp\.mapping/d' nvim/.config/nvim/lua/rich/plugins/cmp.lua
+
 mutate_machine "a tmux.conf path that does not exist is caught" "every path the configs hardcode" \
   sed -i '' 's|~/.local/bin/tmux-clear-scrollback|~/.local/bin/does-not-exist|' tmux/.config/tmux/tmux.conf
 

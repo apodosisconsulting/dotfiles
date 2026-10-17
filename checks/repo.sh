@@ -419,6 +419,34 @@ else
   ok "]q [q ]d [d take a count: all $navs_all cnext, cprev and vim.diagnostic.jump calls use v:count1"
 fi
 
+# Enter in the completion menu is a newline unless an item was chosen.
+#
+# cmp opens its menu with nothing selected, and <CR> was confirm({ select =
+# true }), which takes the first entry when nothing is: typing `alpha` and Enter
+# beside `alphabet` wrote `alphabet` and swallowed the line break. Every Enter
+# key whose value is a cmp mapping, anywhere in the lua config, has to be a
+# confirm with select = false -- every rather than the first, because a
+# cmp.setup.filetype or cmp.setup.buffer table replaces the key for its
+# buffers, the last-write shape of the option checks above. A cmp mapping is
+# anything written X.mapping, which is how cmp's API reads under whatever name
+# it was required; telescope's <CR> maps to an action, so it is not read.
+# <Enter> and <Return> are the same key as <CR>, in any case. Comment lines are
+# dropped, and so is a trailing comment, so neither can supply the words.
+# tests/test-nvim.sh presses Enter with the menu open in a running nvim.
+cr_maps="$(grep -rniE "\[[\"']<(cr|enter|return)>[\"']\][[:space:]]*=.*\.mapping[.(]" nvim/.config/nvim --include='*.lua' |
+  grep -vE '^[^:]*:[0-9]+:[[:space:]]*--' | sed 's/[[:space:]]--.*$//')"
+cr_seen="$(printf '%s\n' "$cr_maps" | grep -c .)"
+cr_first="$(printf '%s\n' "$cr_maps" | grep . |
+  grep -vE 'cmp\.mapping\.confirm\(\{[^}]*select[[:space:]]*=[[:space:]]*false')"
+if [ "${cr_seen:-0}" -eq 0 ]; then
+  bad "found no <CR> mapped to cmp in the lua config — Enter in the completion menu has moved, and this check would be vacuous"
+elif [ -n "$cr_first" ]; then
+  bad "Enter in the completion menu can accept an item nobody selected, and swallow the newline — <CR> must be confirm({ select = false }):"
+  printf '%s\n' "$cr_first" | sed 's/^/      /'
+else
+  ok "Enter in the completion menu confirms only a selected item, so with none it is a newline"
+fi
+
 section "tmux config"
 # terminal-features is a list, `set -sa` appends to it, and prefix S sources
 # the whole file again. With nothing resetting the list first, every reload

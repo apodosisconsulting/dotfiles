@@ -879,6 +879,114 @@ assert "3]d from line 1 lands on the fourth diagnostic" [ "${d_next:-0}" -eq 4 ]
 assert "3[d from line 7 lands on the fourth diagnostic" [ "${d_prev:-0}" -eq 4 ]
 
 echo
+echo "== Enter in the completion menu is a newline unless an item was chosen =="
+# cmp.lua maps <CR> to confirm({ select = false }) and checks/repo.sh reads that
+# line; this presses it. A buffer holding "alphabet", "alpha" typed on the line
+# below, and cmp's menu open offering alphabet with nothing selected: Enter has
+# to leave "alpha" and start a new line, where select = true wrote "alphabet"
+# and no line break. Then the same with <C-y>, which has to accept "alphabet".
+# That is the control: it shows the menu really offered the word and a confirm
+# through this config's maps really inserts it, so the newline is Enter's
+# choice and not cmp missing or broken.
+#
+# Typed the way a person types, which is what the timers are for. cmp completes
+# on TextChangedI only when the cursor has moved one column since the last one,
+# so "alph" fed at once and then "a" on its own opens the menu, and five letters
+# fed at once read as a paste and open nothing. nvim_feedkeys with "x!" stays in
+# Insert mode once the typeahead runs out, and the timers run while it waits:
+# they type the last letter, wait for the menu, press the key, wait for the
+# buffer to change, then type "next" and leave Insert mode. The key and "next"
+# are fed apart because fed together, here, nvim never left Insert mode. A
+# watchdog exits nvim after 20s, so a probe that sticks fails instead of
+# hanging the suite. A .txt, so no language server can preselect an item.
+cat >"$SANDBOX/cmp_probe.lua" <<'LUA'
+local key = vim.keycode(vim.env.CMP_KEY)
+local t0 = vim.uv.now()
+local menu, offered, selected = false, false, "unread"
+local function lines()
+  return table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "|")
+end
+local function report(tag)
+  io.stdout:write(string.format("CMP_%s CMP_MENU=%s CMP_OFFERED=%s CMP_SELECTED=%s CMP_LINES=%s\n", tag,
+    tostring(menu), tostring(offered), selected, lines()))
+  io.stdout:flush()
+end
+local spec = require("lazy.core.config").plugins["nvim-cmp"]
+if not (spec and vim.uv.fs_stat(spec.dir)) then
+  io.stdout:write("CMP_PLUGIN=missing\n")
+  return
+end
+vim.defer_fn(function()
+  report("WATCHDOG")
+  os.exit(1)
+end, 20000)
+local function type_next()
+  if lines() == "alphabet soup|alpha" and vim.uv.now() - t0 < 10000 then
+    return vim.defer_fn(type_next, 20)
+  end
+  vim.defer_fn(function()
+    vim.api.nvim_feedkeys(vim.keycode("next<Esc>"), "nt", false)
+  end, 100)
+end
+local function press()
+  local cmp = package.loaded.cmp
+  if cmp and cmp.visible() then
+    menu = true
+    for _, e in ipairs(cmp.get_entries()) do
+      offered = offered or e:get_word() == "alphabet"
+    end
+    local e = cmp.get_selected_entry()
+    selected = e and e:get_word() or "none"
+    vim.api.nvim_feedkeys(key, "mt", false)
+    vim.defer_fn(type_next, 20)
+  elseif vim.uv.now() - t0 > 8000 then
+    vim.api.nvim_feedkeys(vim.keycode("<Esc>"), "nt", false)
+  else
+    vim.defer_fn(press, 20)
+  end
+end
+local function last_letter()
+  if lines() ~= "alphabet soup|alph" and vim.uv.now() - t0 < 8000 then
+    return vim.defer_fn(last_letter, 20)
+  end
+  vim.api.nvim_feedkeys("a", "mt", false)
+  vim.defer_fn(press, 20)
+end
+vim.api.nvim_buf_set_lines(0, 0, -1, false, { "alphabet soup", "" })
+vim.api.nvim_win_set_cursor(0, { 2, 0 })
+vim.defer_fn(last_letter, 20)
+vim.api.nvim_feedkeys("Aalph", "tx!", false)
+report("DONE")
+LUA
+: >"$SANDBOX/cmp.txt"
+cmp_press() { # $1 = the key, as vim.keycode takes it; prints what the buffer ended up holding
+  local got
+  got="$(CMP_KEY="$1" nv "$SANDBOX/cmp.txt" 'lua vim.wait(500)' "luafile $SANDBOX/cmp_probe.lua")"
+  printf '%s\n' "$got"
+  # Not an assertion; the ones after it fail on their own. When the probe did
+  # not finish, what nvim printed is the next thing anyone will want.
+  if ! contains "$got" "CMP_DONE" && ! contains "$got" "CMP_PLUGIN=missing"; then
+    printf '      nvim said: %s\n' "$(printf '%s' "$got" | tr '\n' ' ' | cut -c1-200)" >&2
+  fi
+}
+out="$(cmp_press '<CR>')"
+if contains "$out" "CMP_PLUGIN=missing"; then
+  printf '  \033[33mSKIP\033[0m  nvim-cmp is not installed, so there is no menu to press Enter in\n'
+else
+  printf '    Enter: %s\n' "$(printf '%s' "$out" | grep -o 'CMP_LINES=.*' | head -1)"
+  # Without these the lines below could be from a menu that never opened.
+  assert "cmp's menu was open, offering alphabet, when Enter was pressed (guards a vacuous pass)" \
+    contains "$out" "CMP_MENU=true CMP_OFFERED=true"
+  assert "...with nothing selected in it" contains "$out" "CMP_SELECTED=none"
+  assert "Enter with nothing selected keeps the typed word and starts a new line" \
+    contains "$out" "CMP_DONE CMP_MENU=true CMP_OFFERED=true CMP_SELECTED=none CMP_LINES=alphabet soup|alpha|next"
+  out="$(cmp_press '<C-y>')"
+  printf '    <C-y>: %s\n' "$(printf '%s' "$out" | grep -o 'CMP_LINES=.*' | head -1)"
+  assert "<C-y> with nothing selected still accepts the first item, so the newline above was Enter's choice" \
+    contains "$out" "CMP_DONE CMP_MENU=true CMP_OFFERED=true CMP_SELECTED=none CMP_LINES=alphabet soup|alphabetnext"
+fi
+
+echo
 echo "== one clipboard: yank, paste and delete all go through the system's =="
 # What options.lua and keymaps.lua claim, checked by doing it: yy has to land
 # on pbcopy, p has to read pbpaste, and the two void-register maps have to
