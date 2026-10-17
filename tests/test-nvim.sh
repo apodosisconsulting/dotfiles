@@ -9,7 +9,10 @@
 # XDG_STATE_HOME is redirected so shada, undo history and lsp.log land in a
 # scratch dir rather than the real one. XDG_DATA_HOME is NOT redirected: the
 # plugins are already installed there, and pointing it elsewhere would make lazy
-# clone every one of them over the network on every run.
+# clone every one of them over the network on every run. It is honoured when
+# the caller sets it, the way nvim honours it, which is how this suite runs a
+# second Neovim against a plugin set and parsers of its own; NVIM_DATA below is
+# where nvim will look, for the skips that ask whether Mason installed a server.
 #
 # XDG_CACHE_HOME is redirected too. vim.loader, which lazy turns on, compiles
 # each lua file it loads into the cache's luac dir, under a name made from the
@@ -43,6 +46,7 @@ command -v nvim >/dev/null 2>&1 || skip_suite "nvim is not installed"
 # checkout's config while every other check tested the worktree's.
 NVIM_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
 [ -f "$NVIM_CONFIG/init.lua" ] || skip_suite "no nvim config at $NVIM_CONFIG"
+NVIM_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/nvim"
 
 STATE="$TEST_TMP/state"
 CACHE="$TEST_TMP/cache"
@@ -347,7 +351,7 @@ echo
 echo "== an LSP client actually attaches to a real file =="
 # vim.wait with a predicate polls rather than sleeping a guess, so this either
 # attaches inside the budget or reports honestly that it did not.
-if [ -x "$HOME/.local/share/nvim/mason/bin/lua-language-server" ]; then
+if [ -x "$NVIM_DATA/mason/bin/lua-language-server" ]; then
   out="$(nv "$SANDBOX/start.lua" \
     'lua vim.wait(20000, function() return #vim.lsp.get_clients({ bufnr = 0 }) > 0 end, 250)' \
     'lua local c = vim.lsp.get_clients({ bufnr = 0 }); print("FT=" .. vim.bo.filetype .. " CLIENTS=" .. #c .. " NAME=" .. (c[1] and c[1].name or "none"))')"
@@ -505,7 +509,7 @@ echo "== pyright resolves what a folder of loose scripts imports =="
 # Not nv(): the probe opens its own files and quits nvim itself. TMPDIR puts its
 # folders under this suite's scratch dir, and the cd it does keeps anything a
 # plugin writes into the cwd on exit in there too.
-if [ -x "$HOME/.local/share/nvim/mason/bin/pyright-langserver" ]; then
+if [ -x "$NVIM_DATA/mason/bin/pyright-langserver" ]; then
   out="$(TMPDIR="$TEST_TMP" PATH="$CLIP_BIN:$PATH" XDG_STATE_HOME="$STATE" XDG_CACHE_HOME="$CACHE" \
     nvim --headless -c "luafile $REPO_ROOT/tests/helpers/pyright-probe.lua" 2>&1)"
   # Only an explicit =false is a skip. A probe that died before printing it is
@@ -600,7 +604,7 @@ format_check() { # $1 = extension, $2 = ugly content, $3 = expected formatter, $
   # This guard was lost when the assertion was rewritten to ask conform, and CI
   # duly reported two missing binaries as config failures.
   if ! command -v "$want" >/dev/null 2>&1 &&
-    [ ! -x "$HOME/.local/share/nvim/mason/bin/$want" ]; then
+    [ ! -x "$NVIM_DATA/mason/bin/$want" ]; then
     printf '  \033[33mSKIP\033[0m  %s: %s is not installed on this machine\n' "$ext" "$want"
     return 0
   fi
