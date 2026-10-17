@@ -3,6 +3,12 @@
 -- Formatter defaults (indent width, etc.) come from global config files
 -- in ~/  (.prettierrc, .stylua.toml, .clang-format); project-level
 -- configs override these automatically.
+--
+-- .prettierrc's tabWidth is 4, with an override taking YAML back to 2. JSON
+-- has no comments, so the reason lives here: YAML in these repos is written
+-- at 2, and at 4 every save re-indented the file -- 53 of the 69 lines in
+-- .github/workflows/ci.yml. `make lint` runs prettier over the tracked YAML
+-- with that file, and checks/repo.sh asserts the override.
 return {
     "stevearc/conform.nvim",
     event = { "BufWritePre" },

@@ -524,6 +524,59 @@ mutate "a pipeline into a quiet grep under pipefail is caught" "quiet grep" \
 mutate "tests/lib.sh gaining set -e is caught" "does not set -e" \
   sed -i '' 's/^set -uo pipefail/set -euo pipefail/' tests/lib.sh
 
+# The defect this exists for: a bare ahead arrow, so the prompt read
+# "⇡took 5s".
+mutate "a git_status symbol with no trailing space is caught" "every git_status symbol ends in a space" \
+  sed -i '' 's/^ahead = "\(.*\) "$/ahead = "\1"/' starship/.config/starship.toml
+
+mutate "an unreadable [git_status] table fails rather than passing vacuously" "every git_status symbol ends in a space" \
+  sed -i '' 's/^\[git_status\]$/[git_state]/' starship/.config/starship.toml
+
+# The one the first fix missed: renamed not set at all, so starship drew its
+# default, a bare "»", and a staged rename read "»took 5s". Once from the list
+# repo.sh keeps, once from starship itself, which fills in the default.
+mutate "a git_status symbol left to starship's default is caught" "every git_status symbol ends in a space" \
+  sed -i '' '/^renamed = /d' starship/.config/starship.toml
+
+mutate_machine "a bare default starship draws for an unset symbol is caught" "starship draws every git_status symbol" \
+  sed -i '' '/^renamed = /d' starship/.config/starship.toml
+
+# The defect this exists for: no override, so YAML gets the top-level 4 and
+# every save re-indents it. Rewritten through json, not sed, so the file still
+# parses and it is the width that fails rather than the read.
+mutate "YAML left at .prettierrc's top-level tabWidth is caught" "prettier indents YAML by 2" \
+  python3 -c 'import json; p = "home/.prettierrc"; c = json.load(open(p)); del c["overrides"]; open(p, "w").write(json.dumps(c))'
+
+# Prettier applies overrides in order, so a later one is the one that counts.
+mutate "a later override setting YAML back to 4 is caught" "prettier indents YAML by 2" \
+  python3 -c 'import json; p = "home/.prettierrc"; c = json.load(open(p)); c["overrides"].append({"files": "*.yml", "options": {"tabWidth": 4}}); open(p, "w").write(json.dumps(c))'
+
+mutate "an unreadable home/.prettierrc fails rather than passing vacuously" "prettier indents YAML by 2" \
+  bash -c 'printf "not json\n" >> home/.prettierrc'
+
+# Patterns a glob on the bare name cannot judge. Each of these had prettier
+# re-indent ci.yml at 4 while the check, matching them as plain globs, read 2.
+mutate "a later override for a path the check cannot judge is caught" "prettier indents YAML by 2" \
+  python3 -c 'import json; p = "home/.prettierrc"; c = json.load(open(p)); c["overrides"].append({"files": ".github/**/*.yml", "options": {"tabWidth": 4}}); open(p, "w").write(json.dumps(c))'
+
+mutate "an excludeFiles path the check cannot judge is caught" "prettier indents YAML by 2" \
+  python3 -c 'import json; p = "home/.prettierrc"; c = json.load(open(p)); c["overrides"][0]["excludeFiles"] = ".github/workflows/ci.yml"; open(p, "w").write(json.dumps(c))'
+
+mutate "a brace pattern the check cannot judge is caught" "prettier indents YAML by 2" \
+  python3 -c 'import json; p = "home/.prettierrc"; c = json.load(open(p)); c["overrides"].append({"files": "*.{yml,yaml}", "options": {"tabWidth": 4}}); open(p, "w").write(json.dumps(c))'
+
+# The defect this exists for: the 99 pattern anchored to the repo root again,
+# so nvim started in a subdirectory leaks its scratch files.
+mutate "a root-anchored 99 pattern in the global ignore is caught" "the global ignore covers what it claims" \
+  sed -i '' 's|^\*\*/tmp/99-\*$|tmp/99-*|' git/.config/git/ignore
+
+mutate "a build directory the global ignore no longer covers is caught" "the global ignore covers what it claims" \
+  sed -i '' '/^node_modules\/$/d' git/.config/git/ignore
+
+# The other direction: .env.* hides the template once its negation is gone.
+mutate "a .env template the global ignore hides is caught" "the global ignore covers what it claims" \
+  sed -i '' '/^!\.env\.example$/d' git/.config/git/ignore
+
 mutate_machine "a missing git hook is caught" "hooks installed" \
   rm -f .githooks/pre-commit
 

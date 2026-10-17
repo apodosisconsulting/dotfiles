@@ -1,5 +1,6 @@
 {
   "tabWidth": 4,
   "singleQuote": false,
-  "trailingComma": "all"
+  "trailingComma": "all",
+  "overrides": [{ "files": ["*.yml", "*.yaml"], "options": { "tabWidth": 2 } }]
 }

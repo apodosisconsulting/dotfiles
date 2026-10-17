@@ -5,6 +5,19 @@ __MACOSX/
 *.bak
 *.tmp
 
+# Python and Node build products. Each project should ignore its own, but a
+# repo whose .gitignore is missing must still not be able to commit a virtual
+# environment or a dependency tree with one `git add -A`.
+#
+# Not only git reads this file. ripgrep and fd honour it inside any git repo,
+# so in a repo that does not ignore these itself they also vanish from rg, fd
+# and telescope's find_files and live_grep, which run rg. Usually what a
+# search wants; to look inside one anyway, rg --no-ignore-global or
+# fd --no-ignore-vcs.
+.venv/
+__pycache__/
+node_modules/
+
 .env
 .env.*
 .env.local
@@ -18,7 +31,9 @@ __MACOSX/
 
 # Scratch files from the nvim 99 plugin. Its tmp_dir is "./tmp", relative to
 # the cwd, so these land in whatever project you happen to be editing — and the
-# *-prompt files contain excerpts of that project's source.
-tmp/99-*
+# *-prompt files contain excerpts of that project's source. **/ because a
+# pattern with a slash in the middle is anchored to the repo root: plain
+# tmp/99-* missed every file from an nvim started in a subdirectory.
+**/tmp/99-*
 
 **/.claude/settings.local.json

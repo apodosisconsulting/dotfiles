@@ -1077,6 +1077,165 @@ else
   ok "tests/lib.sh does not set -e, so assertions report rather than abort"
 fi
 
+section "Prompt"
+# The git_status symbols are the only space between that module and the next.
+# Its format has no trailing separator, and every module that can follow it
+# begins with a word ("via 🐍", "took 5s"), so a symbol with no trailing space
+# runs straight into it. Three did: ahead was a bare "⇡", and for as long as a
+# branch was ahead of its upstream the prompt read "⇡took 5s". Nothing failed
+# and nothing looked broken, only cramped.
+#
+# Every key in the table bar the settings, not the three that were wrong: any
+# symbol can be the last one drawn, and one added later is covered too. TOML
+# rejects a key set twice, so there is no later write to miss. A symbol set to
+# "" draws nothing and needs no gap; a single-quoted one, or any other
+# spelling, is reported, which errs loud.
+#
+# And every symbol starship draws must be in the table, because one left out
+# gets starship's default, which this cannot read. Reading only the keys
+# written here passed while renamed's default, a bare "»", made a branch whose
+# only change was a staged rename read "»took 5s". The list is the symbol keys
+# `starship print-config git_status` names in 1.24, which needs starship, and
+# CI has none; checks/machine.sh asks the installed starship instead, so a
+# symbol a later release adds is caught there.
+GS_SYMBOLS="conflicted ahead behind diverged up_to_date untracked stashed
+  modified staged renamed deleted typechanged"
+gs_syms="$(awk '/^\[git_status\][[:space:]]*(#.*)?$/ { p = 1; next } /^\[/ { p = 0 } p' \
+  starship/.config/starship.toml |
+  grep -E '^[[:space:]]*[a-z_]+[[:space:]]*=' |
+  grep -vE '^[[:space:]]*(style|format|disabled|ignore_submodules|windows_starship|use_git_executable)[[:space:]]*=')"
+gs_seen="$(printf '%s\n' "$gs_syms" | grep -c '=')"
+gs_bad="$(printf '%s\n' "$gs_syms" | grep '=' | grep -vE '=[[:space:]]*"([^"]* )?"[[:space:]]*(#.*)?$')"
+# Space-padded, so a case pattern matches whole keys: "staged" is not found
+# inside a hypothetical "unstaged".
+gs_keys=" $(printf '%s\n' "$gs_syms" | sed -nE 's/^[[:space:]]*([a-z_]+)[[:space:]]*=.*/\1/p' | tr '\n' ' ')"
+gs_unset=""
+for k in $GS_SYMBOLS; do
+  case "$gs_keys" in
+    *" $k "*) ;;
+    *) gs_unset="$gs_unset $k" ;;
+  esac
+done
+if [ "${gs_seen:-0}" -eq 0 ]; then
+  bad "read no symbols out of starship.toml's [git_status] table — the check would be vacuous"
+elif [ -n "$gs_bad" ] || [ -n "$gs_unset" ]; then
+  if [ -n "$gs_unset" ]; then
+    bad "git_status symbol(s) not set in starship.toml, so starship draws its default, which can lack the space (renamed's is \"»\"):$gs_unset"
+  fi
+  if [ -n "$gs_bad" ]; then
+    bad "git_status symbol(s) with no trailing space, so they run into the next module (\"⇡took 5s\"):"
+    printf '%s\n' "$gs_bad" | sed 's/^/      /'
+  fi
+else
+  ok "every git_status symbol ends in a space ($gs_seen of them, none left to starship's default), so none runs into the next module"
+fi
+
+section "Formatters"
+# home/.prettierrc is stowed to ~, so it is the prettier config for every repo
+# under ~ that has none of its own, and format-on-save applies it. Its tabWidth
+# is 4, which re-indented every YAML file on save, this repo's CI workflow
+# included, so an override takes YAML back to 2. `make lint` proves that
+# against the YAML here, but only where prettier is installed; this needs
+# nothing but python3.
+#
+# The width is worked out the way prettier does it, not by finding the
+# override: the top-level value, then every override whose files match, in
+# order, so a later one that sets YAML back to 4 is the one that counts.
+# Patterns are matched as shell globs against the bare name, which is how
+# prettier matches a plain one like *.yml. Anything more than letters, digits,
+# _ . - * and ? can match differently there: an override for .github/**/*.yml,
+# one for *.{yml,yaml}, or an excludeFiles naming .github/workflows/ci.yml each
+# had prettier re-indent ci.yml at 4 while this still read 2. So such a
+# pattern, in files or excludeFiles, fails as one this cannot judge rather than
+# being guessed at. A .prettierrc written as YAML rather than JSON does not
+# parse here, and fails as unreadable.
+prettier_width() { # $1 = file name; prints the tabWidth prettier would use
+  python3 -c '
+import fnmatch, json, re, sys
+cfg = json.load(open(sys.argv[1]))
+width = cfg.get("tabWidth", 2)
+def globs(v):
+    return [v] if isinstance(v, str) else list(v or [])
+for o in cfg.get("overrides", []):
+    for g in globs(o.get("files")) + globs(o.get("excludeFiles")):
+        if not re.fullmatch(r"[\w.*?-]+", g):
+            print("unjudgeable", g)
+            sys.exit()
+    hit = any(fnmatch.fnmatch(sys.argv[2], g) for g in globs(o.get("files")))
+    out = any(fnmatch.fnmatch(sys.argv[2], g) for g in globs(o.get("excludeFiles")))
+    if hit and not out:
+        width = o.get("options", {}).get("tabWidth", width)
+print(width)
+' home/.prettierrc "$1" 2>/dev/null
+}
+if ! command -v python3 >/dev/null 2>&1; then
+  meh "python3 not installed, cannot read home/.prettierrc"
+else
+  yml_w="$(prettier_width ci.yml)"
+  yaml_w="$(prettier_width ci.yaml)"
+  if [ -z "$yml_w" ] || [ -z "$yaml_w" ]; then
+    bad "could not read a tabWidth for YAML out of home/.prettierrc — the check would be vacuous"
+  elif [ "${yml_w%% *}" = unjudgeable ]; then
+    bad "home/.prettierrc has an override pattern this check cannot judge (${yml_w#* }) — prettier may match it differently from a glob on the bare name, so a 2 here would prove nothing"
+  elif [ "$yml_w" != 2 ] || [ "$yaml_w" != 2 ]; then
+    bad "home/.prettierrc gives .yml files a tabWidth of $yml_w and .yaml files $yaml_w — anything but 2 and format-on-save re-indents them"
+  else
+    ok "prettier indents YAML by 2 under home/.prettierrc, whatever its top-level tabWidth"
+  fi
+fi
+
+section "Git"
+# The global ignore is judged by git itself, not by reading its patterns,
+# because its defect was in how git reads one. A pattern with a slash in the
+# middle is anchored to the repo root, so tmp/99-* caught the 99 plugin's
+# scratch files only from an nvim started at the top of a repo. Started in a
+# subdirectory they were one `git add -A` from a commit, prompt excerpts of the
+# source and all. The nested path below is what proves the **/; the .env
+# templates are what prove the negations still win.
+#
+# A fresh repo in a temp dir, so this repo's own .gitignore cannot answer for
+# it. GIT_DIR and GIT_INDEX_FILE are unset first. The pre-commit hook exports
+# GIT_INDEX_FILE, and from a linked worktree GIT_DIR too, both naming the real
+# repository's files; with GIT_DIR set, `git init` would reinitialise that
+# repository and check-ignore would read its excludes. A subshell, so the trap
+# that removes the temp dir cannot replace one check.sh sets.
+GLOBAL_IGNORE="git/.config/git/ignore"
+ign_out="$(
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_CONFIG_PARAMETERS
+  probe="$(mktemp -d "${TMPDIR:-/tmp}/check-ignore.XXXXXX")" || exit 1
+  trap 'rm -rf "$probe"' EXIT
+  git init -q "$probe" || exit 1
+  ask() { # $1 = what the path should be, $2 = the path
+    git -C "$probe" -c core.excludesFile="$REPO/$GLOBAL_IGNORE" check-ignore --no-index -q "$2"
+    printf '%s %s %s\n' "$1" "$?" "$2"
+  }
+  for p in tmp/99-state sub/dir/tmp/99-prompt-1 .DS_Store .env .venv/bin/python \
+    pkg/__pycache__/m.pyc node_modules/x/i.js; do
+    ask ignored "$p"
+  done
+  for p in .env.example .env.sample .env.template .env.dist; do
+    ask kept "$p"
+  done
+)"
+ign_seen=0
+ign_bad=0
+while read -r want rc p; do
+  [ -n "$p" ] || continue
+  ign_seen=$((ign_seen + 1))
+  case "$want:$rc" in
+    ignored:0 | kept:1) continue ;;
+    ignored:1) bad "the global ignore does not ignore $p, so a repo with no .gitignore of its own commits it" ;;
+    kept:0) bad "the global ignore hides $p, the checked-in template its negations exist to keep" ;;
+    *) bad "git check-ignore could not judge $p (exit $rc), so the global ignore went unchecked" ;;
+  esac
+  ign_bad=$((ign_bad + 1))
+done <<<"$ign_out"
+if [ "$ign_seen" -eq 0 ]; then
+  bad "could not ask git about $GLOBAL_IGNORE at all — the check would be vacuous"
+elif [ "$ign_bad" -eq 0 ]; then
+  ok "the global ignore covers what it claims at any depth and keeps the .env templates ($ign_seen paths, judged by git)"
+fi
+
 section "Make targets"
 # A target listed in .PHONY but with no recipe does not error — make prints
 # "Nothing to be done" and exits 0. `make test` did exactly that after a careless

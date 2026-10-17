@@ -12,6 +12,8 @@
 [init]
 	defaultBranch = main
 [pull]
+	# Rebase local commits onto what was fetched instead of merging it, so a
+	# pull on a branch that has moved does not add a merge commit.
 	rebase = true
 [rebase]
 	# Pairs with pull.rebase above: without it a `git pull` with anything dirty
@@ -33,8 +35,21 @@
 	# you actually staged.
 	verbose = true
 [rerere]
+	# Record how each conflict was resolved and resolve an identical hunk the
+	# same way next time: a rebase redone after --abort, or one fix carried to
+	# another branch. The replayed result is written to the file but not
+	# staged, so it still gets looked at: rerere.autoUpdate defaults to false.
 	enabled = true
 [diff]
+	# Anchor the diff on lines that occur rarely in both versions, not on the
+	# shortest edit. Myers, the default, matches stray braces and blank lines,
+	# so one function replaced by another further up read as both rewritten
+	# line by line and interleaved; histogram shows one added whole and the
+	# other removed whole.
 	algorithm = histogram
 [merge]
+	# Conflicts also show the common ancestor (after |||||||), so what each
+	# side changed can be read off rather than guessed. zdiff3 rather than
+	# diff3: lines both sides agree on at either end of a conflict are moved
+	# out of it.
 	conflictstyle = zdiff3
