@@ -22,12 +22,21 @@ return {
         bottom = 4,
     },
 
-    enable_kitty_keyboard = true, -- better key reporting for nvim
+    -- No effect in this setup. The kitty keyboard protocol is switched on by
+    -- the program reading the keys, and every pane is tmux (default_prog
+    -- below), which never asks for it and does not pass a request from nvim
+    -- or anything else inside it through. tmux uses xterm's modifyOtherKeys
+    -- instead; see the extended-keys comment in tmux.conf.
+    enable_kitty_keyboard = true,
+    -- Little of this is ever filled. tmux switches WezTerm to the alternate
+    -- screen when it attaches, which keeps no scrollback, so the scrollback
+    -- that exists is tmux's own history-limit in tmux.conf.
     scrollback_lines = 10000,
     adjust_window_size_when_changing_font_size = false,
 
-    -- Opt+Arrow: send standard word-jump sequences (Esc+b / Esc+f)
-    -- Kitty keyboard protocol doesn't translate these for the shell/tmux.
+    -- Opt+Left/Right send ESC b / ESC f, which zsh's emacs keymap binds to
+    -- backward-word / forward-word, and Opt+Backspace sends Ctrl-W,
+    -- backward-kill-word. tmux passes all three to the pane unchanged.
     keys = {
         { key = "LeftArrow", mods = "OPT", action = wezterm.action.SendString("\x1bb") },
         { key = "RightArrow", mods = "OPT", action = wezterm.action.SendString("\x1bf") },

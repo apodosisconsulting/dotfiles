@@ -420,13 +420,67 @@ else
 fi
 
 section "tmux config"
-# Anchored to the set-option line, not to any mention: the comment above it
-# explains what usstyle is, so a bare `grep usstyle` stayed green after the
-# setting itself was removed.
-if grep -qE '^[[:space:]]*set .*terminal-features.*usstyle' tmux/.config/tmux/tmux.conf; then
-  ok "terminal-features declares usstyle (undercurl survives)"
+# terminal-features is a list, `set -sa` appends to it, and prefix S sources
+# the whole file again. With nothing resetting the list first, every reload
+# added another copy of the line: nothing broke, and the list only grew. The
+# reset has to come before the FIRST append, or it throws away the ones above.
+#
+# What tmux ends up declaring is what is appended after the LAST reset, because
+# a reset or a plain `set` further down replaces everything before it -- the
+# same last-write-wins shape as the checks above, so this reads the file the way
+# tmux applies it rather than looking for a mention. sync, hyperlinks and
+# overline are things WezTerm draws and tmux drops unless they are declared:
+# whole-frame redraws, OSC 8 links, SGR 53.
+tf_state="$(awk '
+  /^[[:space:]]*set(-option)?[[:space:]]+-[A-Za-z]+[[:space:]]+terminal-features([[:space:]]|$)/ {
+    line = $0
+    sub(/[[:space:]]#.*/, "", line)
+    if ($2 ~ /a/) {
+      if (!first_append) first_append = NR
+      feats = feats " " line
+    } else {
+      if (!first_reset) first_reset = NR
+      feats = ($2 ~ /u/) ? "" : line
+    }
+  }
+  END {
+    gsub(/[,:"\047]/, " ", feats)
+    print first_reset + 0, first_append + 0, feats
+  }
+' "$TMUXCONF")"
+read -r tf_reset tf_append tf_feats <<<"$tf_state"
+case "$tf_reset" in '' | *[!0-9]*) tf_reset=0 ;; esac
+case "$tf_append" in '' | *[!0-9]*) tf_append=0 ;; esac
+if [ "$tf_append" -eq 0 ]; then
+  bad "found no 'set -sa terminal-features' line — nothing declares what the outer terminal can do, and this check has nothing to read"
+elif [ "$tf_reset" -eq 0 ]; then
+  bad "terminal-features is appended to with no 'set -su terminal-features' before it — every prefix S adds another copy of the list"
+elif [ "$tf_reset" -gt "$tf_append" ]; then
+  bad "the terminal-features reset (line $tf_reset) comes after the first append (line $tf_append), so it throws that append away"
 else
-  bad "terminal-features lacks usstyle — nvim's diagnostic undercurls are stripped"
+  ok "terminal-features is reset before it is appended to, so a reload does not add another copy"
+fi
+# usstyle is read from that same list, and so is extkeys in the restore check
+# below. Both used to be a grep for any set line naming them, which stayed
+# green with a reset under that line and tmux holding neither. The grep was
+# itself a fix: tmux.conf's comment explains what usstyle is, so a bare
+# `grep usstyle` stayed green after the setting was removed. The awk above
+# reads set lines only, and strips their trailing comments.
+case " $tf_feats " in
+  *" usstyle "*) ok "terminal-features declares usstyle (undercurl survives)" ;;
+  *) bad "terminal-features does not end up declaring usstyle — nvim's diagnostic undercurls are stripped" ;;
+esac
+tf_missing=""
+for f in sync hyperlinks overline; do
+  case " $tf_feats " in
+    *" $f "*) ;;
+    *) tf_missing="$tf_missing $f" ;;
+  esac
+done
+if [ -n "$tf_missing" ]; then
+  bad "terminal-features does not end up declaring${tf_missing} — tmux strips those before they reach WezTerm"
+else
+  ok "terminal-features declares sync, hyperlinks and overline, so redraws arrive whole and links stay links"
 fi
 
 # Restore must not sit where a held Ctrl puts it, and the key it moved to has to
@@ -439,13 +493,25 @@ fi
 #
 # The second half is the one that would rot silently. C-S-r and C-r are the same
 # byte in a traditional terminal; they are only distinct when tmux asks for
-# CSI-u reporting (extended-keys) AND believes the terminal can do it (the
-# extkeys terminal-feature). Drop either and the binding still READS correct
-# while becoming unreachable — the config would claim a key that cannot be
-# pressed. So any Shift-bearing restore key requires both.
+# extended key reporting -- xterm's modifyOtherKeys, here (extended-keys) -- AND
+# believes the terminal can do it (the extkeys terminal-feature). Drop either
+# and the binding still READS correct while becoming unreachable — the config
+# would claim a key that cannot be pressed. So any Shift-bearing restore key
+# requires both.
+#
+# Both are read the way tmux applies them. extended-keys is the LAST line that
+# sets it, so a later `set -s extended-keys off` counts; extkeys comes from the
+# features appended after the last terminal-features reset, as above. Counting
+# lines that mention either, which this did, stayed green with tmux holding
+# neither.
 restore_key="$(tmux_setting '@resurrect-restore')"
-ext_on="$(grep -cE '^[[:space:]]*set -s[g]? extended-keys on' "$TMUXCONF")"
-ext_feat="$(grep -cE '^[[:space:]]*set -sa terminal-features .*extkeys' "$TMUXCONF")"
+ext_keys="$(grep -E '^[[:space:]]*set(-option)?([[:space:]]+-[A-Za-z]+)*[[:space:]]+extended-keys([[:space:]]|$)' "$TMUXCONF" |
+  tail -1 | sed 's/[[:space:]]#.*//' |
+  awk '{ for (i = 1; i < NF; i++) if ($i == "extended-keys") { v = $(i + 1); gsub(/["\047]/, "", v); print v; exit } }')"
+ext_on=0
+case "$ext_keys" in on | always) ext_on=1 ;; esac
+ext_feat=0
+case " $tf_feats " in *" extkeys "*) ext_feat=1 ;; esac
 needs_ext=no
 case "$restore_key" in
   *-S-*) needs_ext=yes ;;
@@ -455,9 +521,9 @@ if [ -z "$restore_key" ]; then
 elif [ "$restore_key" = "C-r" ]; then
   bad "@resurrect-restore is C-r, which is exactly what a held Ctrl turns 'prefix r' into"
 elif [ "$needs_ext" = yes ] && [ "$ext_on" -eq 0 ]; then
-  bad "@resurrect-restore is '$restore_key', but 'set -s extended-keys on' is missing — without it that is the same byte as the plain-Ctrl key and the binding is unreachable"
+  bad "@resurrect-restore is '$restore_key', but extended-keys does not end up on (last value: '${ext_keys:-unset}') — without it that is the same byte as the plain-Ctrl key and the binding is unreachable"
 elif [ "$needs_ext" = yes ] && [ "$ext_feat" -eq 0 ]; then
-  bad "@resurrect-restore is '$restore_key', but terminal-features never declares extkeys — tmux will not ask the terminal for the sequence that makes it distinct"
+  bad "@resurrect-restore is '$restore_key', but terminal-features does not end up declaring extkeys — tmux will not ask the terminal for the sequence that makes it distinct"
 else
   ok "restore is bound to '$restore_key', off the held-Ctrl path, with the extended-keys support that makes it a key the terminal can send"
 fi
@@ -516,6 +582,28 @@ elif [ "$sr_line" -lt "$tpm_line" ]; then
   ok "status-right is set before tpm runs, so continuum's auto-save survives"
 else
   bad "status-right (line $sr_line) is set AFTER tpm (line $tpm_line) — it overwrites continuum's #() and auto-save silently stops"
+fi
+
+# tpm has to load in the background. In the foreground the first session is not
+# created until every plugin's .tmux script has run, so a new WezTerm window
+# shows nothing for that long and prefix S blocks for as long again — slow, and
+# nothing ever says why.
+#
+# EVERY line that runs tpm is read, not just the last: tmux applies them all,
+# top to bottom, so one in the foreground anywhere in the file is a wait however
+# many backgrounded ones follow it. And finding none at all fails rather than
+# passing, because then this asserted nothing.
+tpm_runs="$(grep -cE '^[[:space:]]*run(-shell)?[[:space:]].*plugins/tpm/tpm' "$TMUXCONF")"
+tpm_fg="$(grep -E '^[[:space:]]*run(-shell)?[[:space:]].*plugins/tpm/tpm' "$TMUXCONF" |
+  grep -cvE '^[[:space:]]*run(-shell)?[[:space:]]+-[A-Za-z]*b[A-Za-z]*[[:space:]]')"
+case "$tpm_runs" in '' | *[!0-9]*) tpm_runs=0 ;; esac
+case "$tpm_fg" in '' | *[!0-9]*) tpm_fg=1 ;; esac
+if [ "$tpm_runs" -eq 0 ]; then
+  bad "found no line in tmux.conf that runs tpm — the plugins never load, and whether they would wait cannot be read"
+elif [ "$tpm_fg" -gt 0 ]; then
+  bad "tmux.conf runs tpm without -b — every new server and every prefix S waits for all the plugins to load"
+else
+  ok "tpm loads in the background (run -b), so a new session does not wait for the plugins"
 fi
 
 # Every key tmux.conf binds is either pressed by tests/test-bindings.sh or

@@ -42,13 +42,25 @@ mkdir -p "$RDIR" "$TEST_TMP/work"
 rm -f "$MARKER_FILE"
 
 # tpm removed: it clones plugins, and continuum would auto-save and auto-restore
-# against whatever directory it found. Everything else in the file is real.
+# against whatever directory it found. Everything else in the file is real. The
+# run line is matched with or without the -b tmux.conf gives it.
 awk '
   /^if "test ! -d ~\/\.config\/tmux\/plugins\/tpm"/ { skip = 2; next }
   skip > 0 { skip--; next }
-  /^run .~\/\.config\/tmux\/plugins\/tpm\/tpm./ { next }
+  /^run (-b )?.~\/\.config\/tmux\/plugins\/tpm\/tpm./ { next }
   { print }
 ' "$CONF" >"$TEST_CONF"
+
+# And the strip has to have WORKED, which nothing else would notice. Adding -b
+# to the run line was enough to stop the old pattern matching it: the line
+# would have stayed in, and this suite would have loaded the real plugins
+# against the real HOME -- the exact thing the strip exists to prevent. So stop
+# before a server starts.
+if grep -qE '^[[:space:]]*run(-shell)?[[:space:]].*tpm/tpm' "$TEST_CONF"; then
+  no "tpm's run line survived the strip, so the test server would load the real plugins"
+  finish
+  exit 1
+fi
 
 # The system clipboard, shimmed. tmux.conf sends every copy-mode copy to
 # copy-command and prefix+] reads pbpaste, both by name -- and its
@@ -318,6 +330,34 @@ if [ "$(tr '\n' ' ' <"$TEST_TMP/resolved" 2>/dev/null)" = "$CLIP_BIN/pbcopy $CLI
 else
   no "tmux's jobs did not resolve pbcopy/pbpaste to the shims; y and ] were NOT pressed"
 fi
+
+# ---------------------------------------------------------------- reload
+
+echo
+echo "== loading tmux.conf again does not lengthen terminal-features =="
+# prefix S sources the whole file again, and terminal-features is a list that
+# `set -sa` appends to. tmux.conf resets it first; without that, every reload
+# added another copy. Loaded here from the stripped copy rather than by pressing
+# S, which sources the REAL file and tpm with it (see S in the list below).
+#
+# The control proves the count can see growth at all: the same copy with the
+# reset taken out has to get longer, or a length that stayed put would mean
+# nothing.
+features_count() { t show -sv terminal-features 2>/dev/null | wc -l | tr -d ' '; }
+build_server
+assert "the list carries tmux.conf's own entry (guards a vacuous count)" \
+  contains "$(t show -sv terminal-features 2>/dev/null)" "hyperlinks"
+n_before="$(features_count)"
+t source-file "$TEST_CONF"
+t source-file "$TEST_CONF"
+n_after="$(features_count)"
+assert "two more loads leave it the same length ($n_before entries)" \
+  [ "${n_after:-0}" -eq "${n_before:--1}" ]
+grep -v '^set -su terminal-features$' "$TEST_CONF" >"$TEST_TMP/no-reset.conf"
+t source-file "$TEST_TMP/no-reset.conf"
+t source-file "$TEST_TMP/no-reset.conf"
+assert "...while without the reset the same two loads lengthen it, so the count can see growth" \
+  [ "$(features_count)" -gt "${n_after:-0}" ]
 
 # ---------------------------------------------------------------- coverage
 

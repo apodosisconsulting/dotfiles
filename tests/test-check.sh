@@ -207,6 +207,36 @@ mutate_machine "a wrong wezterm colour scheme is caught" "colour scheme" \
 mutate "a missing usstyle is caught" "usstyle" \
   sed -i '' 's/:RGB:usstyle/:RGB/' tmux/.config/tmux/tmux.conf
 
+# Declared, then thrown away: the line split in two with a reset between the
+# halves. usstyle and extkeys are still written in the file, and sync,
+# hyperlinks and overline come back after the reset, so only a check that reads
+# what tmux ends up with can tell. Used again for extkeys below.
+split_terminal_features() {
+  sed -i '' 's/:RGB:usstyle:extkeys:sync:hyperlinks:overline"$/:RGB:usstyle:extkeys"\
+set -su terminal-features\
+set -sa terminal-features ",*:RGB:sync:hyperlinks:overline"/' tmux/.config/tmux/tmux.conf
+}
+mutate "usstyle declared and then reset away is caught" "usstyle" \
+  split_terminal_features
+
+# The defect this exists for: an append with no reset before it, so every
+# prefix S adds another copy to the list.
+mutate "terminal-features appended to with no reset is caught" "reset before it is appended to" \
+  sed -i '' '/^set -su terminal-features$/d' tmux/.config/tmux/tmux.conf
+
+mutate "a missing sync feature is caught" "declares sync, hyperlinks and overline" \
+  sed -i '' '/^set -sa terminal-features/s/:sync//' tmux/.config/tmux/tmux.conf
+
+mutate "a missing hyperlinks feature is caught" "declares sync, hyperlinks and overline" \
+  sed -i '' '/^set -sa terminal-features/s/:hyperlinks//' tmux/.config/tmux/tmux.conf
+
+mutate "a missing overline feature is caught" "declares sync, hyperlinks and overline" \
+  sed -i '' '/^set -sa terminal-features/s/:overline//' tmux/.config/tmux/tmux.conf
+
+# Last write wins: a reset further down throws away every append above it.
+mutate "a later reset that discards the declared features is caught" "declares sync, hyperlinks and overline" \
+  bash -c "printf '\nset -su terminal-features\n' >> tmux/.config/tmux/tmux.conf"
+
 # The defect this exists for: restore back on the key a held Ctrl reaches.
 mutate "restore left on resurrect's C-r default is caught" "restore is bound to" \
   sed -i '' "s/^set -g @resurrect-restore 'C-S-r'$/set -g @resurrect-restore 'C-r'/" tmux/.config/tmux/tmux.conf
@@ -217,6 +247,13 @@ mutate "a Shift-bearing restore key without extended-keys is caught" "restore is
 
 mutate "a Shift-bearing restore key without the extkeys feature is caught" "restore is bound to" \
   sed -i '' 's/:RGB:usstyle:extkeys/:RGB:usstyle/' tmux/.config/tmux/tmux.conf
+
+mutate "extkeys declared and then reset away is caught" "restore is bound to" \
+  split_terminal_features
+
+# Last write wins: a later extended-keys off is the value tmux applies.
+mutate "a later extended-keys off is caught" "restore is bound to" \
+  bash -c "printf '\nset -s extended-keys off\n' >> tmux/.config/tmux/tmux.conf"
 
 mutate "no @resurrect-restore at all fails rather than passing vacuously" "restore is bound to" \
   sed -i '' '/^set -g @resurrect-restore/d' tmux/.config/tmux/tmux.conf
@@ -245,6 +282,19 @@ mutate "a later y rebinding with its own command is caught" "tmux copies to and 
 
 mutate "a prefix ] that never reads pbpaste is caught" "tmux copies to and pastes from" \
   sed -i '' 's/^bind \] run-shell "pbpaste | /bind ] run-shell "cat \/dev\/null | /' tmux/.config/tmux/tmux.conf
+
+# The defect this exists for: tpm back in the foreground, so every new server
+# and every prefix S waits for all the plugins to load.
+mutate "tpm run without -b is caught" "tpm loads in the background" \
+  sed -i '' "s|^run -b '~/.config/tmux/plugins/tpm/tpm'$|run '~/.config/tmux/plugins/tpm/tpm'|" tmux/.config/tmux/tmux.conf
+
+# tmux applies every run line, so one in the foreground is a wait however many
+# backgrounded ones there are.
+mutate "a second, foreground run of tpm is caught" "tpm loads in the background" \
+  bash -c "printf '\nrun '\''~/.config/tmux/plugins/tpm/tpm'\''\n' >> tmux/.config/tmux/tmux.conf"
+
+mutate "no tpm run line at all fails rather than passing vacuously" "tpm loads in the background" \
+  sed -i '' '/^run -b .*plugins\/tpm\/tpm/d' tmux/.config/tmux/tmux.conf
 
 mutate "an untracked lazy-lock.json is caught" "lazy-lock" \
   git rm -q --cached nvim/.config/nvim/lazy-lock.json
