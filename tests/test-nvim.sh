@@ -732,6 +732,14 @@ else
   assert "inlay hints are off until asked for" contains "$out" "GO_HINTS_OFF_AT_START=true"
   assert "<leader>lh turns them on" contains "$out" "GO_HINTS_TOGGLED_ON=true"
   assert "...and gopls sends the parameter-name hints lsp.lua asks for" contains "$out" "GO_HINTS_DRAWN=true"
+  assert ".gohtml and .gotmpl are Go templates, filetype gotmpl" \
+    contains "$out" "GO_FT_gohtml=gotmpl"
+  assert "...both of them" contains "$out" "GO_FT_gotmpl=gotmpl"
+  assert ".tmpl stays Neovim's template, whose syntax is HTML's" contains "$out" "GO_FT_tmpl=template"
+  assert "gopls's templateExtensions are those, all of them gotmpl" \
+    contains "$out" "GO_TEMPLATE_EXTENSIONS_ARE_GOTMPL=true"
+  assert "gopls attaches to a .gohtml" contains "$out" "GO_TEMPLATE_ATTACHED=true"
+  assert "...and reports the template's parse error" contains "$out" "GO_TEMPLATE_PARSE_ERROR=true"
   assert "gopls attaches in a folder of loose .go files with no go.mod" contains "$out" "GO_LOOSE_ATTACHED=true"
   assert "...rooted at that folder" contains "$out" "GO_LOOSE_ROOT_IS_FILE_DIR=true"
   assert "...flags a call to a function no file defines yet (guards a vacuous pass)" \

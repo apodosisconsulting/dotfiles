@@ -357,6 +357,9 @@ return {
                         parameterNames = true,
                         rangeVariableTypes = true,
                     },
+                    -- The extensions filetypes.lua makes gotmpl, read from
+                    -- there so the two lists cannot drift apart.
+                    templateExtensions = require("rich.filetypes").go_template_extensions,
                 },
             },
         }

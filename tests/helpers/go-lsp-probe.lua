@@ -7,6 +7,8 @@
 --             inlay hints
 --   mod/store a package where staticcheck reports S1002, and does not report
 --             the style checks staticcheck itself leaves off (ST1000, ST1003)
+--   mod/page.gohtml  a Go template: it is gotmpl, gopls attaches and reports
+--             its parse error; .tmpl stays Neovim's "template"
 --   loose/    .go files and no go.mod: gopls roots at the folder, so a file
 --             created beside main.go after it was opened is seen
 --   home/     a .go directly in $HOME still gets no root at all
@@ -242,6 +244,40 @@ if sclient then
     emit("GO_STATICCHECK_NO_ST1000", seen and not code("ST1000"))
     emit("GO_STATICCHECK_NO_ST1003", seen and not code("ST1003"))
 end
+
+-- 1c. A Go template in the module. Filetype first, by name, for each of the
+-- three extensions filetypes.lua decides about.
+for _, ext in ipairs({ "gohtml", "gotmpl", "tmpl" }) do
+    emit("GO_FT_" .. ext, vim.filetype.match({ filename = mod .. "/page." .. ext }))
+end
+local tsettings = client and ((client.settings or {}).gopls or {}).templateExtensions or {}
+local all_gotmpl = #tsettings > 0
+for _, ext in ipairs(tsettings) do
+    all_gotmpl = all_gotmpl and vim.filetype.match({ filename = mod .. "/x." .. ext }) == "gotmpl"
+end
+emit("GO_TEMPLATE_EXTENSIONS", table.concat(tsettings, ","))
+emit("GO_TEMPLATE_EXTENSIONS_ARE_GOTMPL", all_gotmpl)
+-- treesitter.lua sets auto_install, which downloads a missing parser into the
+-- real data dir the moment a buffer of its filetype opens, and nothing else
+-- this suite runs has a gotmpl buffer to have installed it. So that autocmd
+-- goes before the template opens; it exists once the first .go has loaded
+-- nvim-treesitter. The unclosed {{ if }} is the parse error asked about.
+pcall(vim.api.nvim_clear_autocmds, { group = "NvimTreesitter-auto_install" })
+vim.fn.writefile(
+    { "<ul>{{range .Items}}<li>{{.Name}}</li>{{end}}</ul>", "{{if .X}}" },
+    mod .. "/page.gohtml"
+)
+local tbuf, tclient = open(mod .. "/page.gohtml")
+emit("GO_TEMPLATE_FT", vim.bo[tbuf].filetype)
+emit("GO_TEMPLATE_ATTACHED", tclient ~= nil)
+emit("GO_TEMPLATE_PARSE_ERROR", tclient ~= nil and vim.wait(20000, function()
+    for _, d in ipairs(vim.diagnostic.get(tbuf)) do
+        if d.source == "template" then
+            return true
+        end
+    end
+    return false
+end, 100))
 
 -- 2. A folder of loose files. util.go is there before main.go is opened;
 -- later.go is written after, the way the next file of an exercise is.

@@ -1,5 +1,5 @@
 -- Main orchestrator: sets leader key, configures netrw, then loads
--- options, plugins (via lazy.nvim), and keymaps in order.
+-- filetypes, options, plugins (via lazy.nvim), and keymaps in order.
 
 vim.g.mapleader = " "
 vim.g.maplocalleader = " "
@@ -9,6 +9,7 @@ vim.g.netrw_browse_split = 0
 vim.g.netrw_banner = 0
 vim.g.netrw_winsize = 25
 
+require("rich.filetypes")
 require("rich.options")
 require("rich.lazy")
 require("rich.keymaps")
