@@ -769,7 +769,7 @@ if ! contains "$out" "TS_MAPS=$EXPECTED_TS_MAPS " || ! contains "$out" "TS_C_HL=
 fi
 
 echo
-echo "== nvim-treesitter's build installs the parser list, and says when it cannot =="
+echo "== nvim-treesitter's build installs the list, and clears what master left =="
 # lazy runs this build on install and on restore, in the real data dir, which
 # nothing here may build into. So the build function is taken out of
 # treesitter.lua and called by hand, on a stand-in plugin directory, with a
@@ -780,8 +780,8 @@ echo "== nvim-treesitter's build installs the parser list, and says when it cann
 # fails it is usually not a bug but a parser added or removed, and this is the
 # line that records it.
 #
-# Proven by hand on a copy of treesitter.lua: deleting the CLI check fails the
-# last two.
+# Proven by hand on copies of treesitter.lua: deleting the two deletes fails
+# both of their checks, and deleting the CLI check fails the last two.
 #
 # NO_TS_BIN holds nvim alone, so a PATH of it and the system's directories has
 # no tree-sitter on it from Homebrew.
@@ -810,10 +810,19 @@ package.preload["nvim-treesitter"] = function()
     end,
   }
 end
+local dir = arg[2]
+for _, d in ipairs({ "parser", "parser-info", "lua" }) do
+  vim.fn.mkdir(dir .. "/" .. d, "p")
+end
+vim.fn.writefile({ "" }, dir .. "/parser/scss.so")
+vim.fn.writefile({ "" }, dir .. "/parser-info/scss.revision")
+vim.fn.writefile({ "" }, dir .. "/lua/keep.lua")
 local spec = dofile(arg[1])
-local ok, err = pcall(spec[1].build, { dir = arg[2] })
-io.stdout:write(string.format("BUILD_OK=%s BUILD_ERR=[%s] BUILD_CALLS=%s \n",
-  tostring(ok), tostring(err or ""):gsub("%s", "_"), table.concat(calls, ";")))
+local ok, err = pcall(spec[1].build, { dir = dir })
+io.stdout:write(string.format("BUILD_OK=%s BUILD_ERR=[%s] BUILD_CALLS=%s PARSER_LEFT=%s INFO_LEFT=%s KEEP_LEFT=%s\n",
+  tostring(ok), tostring(err or ""):gsub("%s", "_"), table.concat(calls, ";"),
+  tostring(vim.uv.fs_stat(dir .. "/parser") ~= nil), tostring(vim.uv.fs_stat(dir .. "/parser-info") ~= nil),
+  tostring(vim.uv.fs_stat(dir .. "/lua/keep.lua") ~= nil)))
 LUA
 out="$(PATH="$TS_FAKE_BIN:$NO_TS_BIN:/usr/bin:/bin" XDG_STATE_HOME="$STATE" XDG_CACHE_HOME="$CACHE" \
   nvim --clean --headless -l "$SANDBOX/ts_build_probe.lua" \
@@ -821,6 +830,9 @@ out="$(PATH="$TS_FAKE_BIN:$NO_TS_BIN:/usr/bin:/bin" XDG_STATE_HOME="$STATE" XDG_
 assert "the build succeeds against an nvim-treesitter that does what it is asked" contains "$out" "BUILD_OK=true"
 assert "it installs exactly the parser list, then updates what is installed" \
   contains "$out" "BUILD_CALLS=install:$EXPECTED_TS_PARSERS;update "
+assert "it removes the parsers master built into the plugin directory" contains "$out" "PARSER_LEFT=false"
+assert "...and their revision files" contains "$out" "INFO_LEFT=false"
+assert "...and nothing else there (guards a build that deleted the plugin)" contains "$out" "KEEP_LEFT=true"
 if ! contains "$out" "BUILD_OK=true"; then
   printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300)"
 fi

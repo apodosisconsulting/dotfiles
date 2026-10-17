@@ -178,7 +178,15 @@ return {
         -- on install and on restore, and `nvim --headless "+Lazy! restore" +qa`
         -- -- what CI and a fresh machine run -- would otherwise quit with the
         -- builds still going. An error here is how lazy shows a failed build.
-        build = function()
+        build = function(plugin)
+            -- master built parsers into its own directory, and git leaves them
+            -- there, untracked, when lazy checks out main. The directory is on
+            -- the runtimepath, so for a language not yet in site/parser the
+            -- old parser is found with no queries left to go with it: a scss
+            -- file opened that way got regex syntax, and no install either,
+            -- because a parser had been found. main never writes there.
+            vim.fn.delete(plugin.dir .. "/parser", "rf")
+            vim.fn.delete(plugin.dir .. "/parser-info", "rf")
             if vim.fn.executable("tree-sitter") == 0 then
                 error(
                     "no tree-sitter CLI on PATH to build parsers with: brew install tree-sitter-cli"
