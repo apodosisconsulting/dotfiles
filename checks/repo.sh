@@ -1363,36 +1363,44 @@ section "Fresh machine"
 # comments dropped, one package per word; the rustup install has to be a line
 # of code, not a comment.
 #
-# The two tables are READ, by nvim, not grepped. A line-based read took the
+# conform's table is READ, by nvim, not grepped. A line-based read took the
 # quoted names off each `ft = {` line, and stylua keeps an entry written over
 # several lines as it is: `python = {`, `"black",`, `},`. The names on the inner
 # line were skipped, the entry's own `},` ended the range, and every entry after
 # it was dropped too, so a partial read reported "all 2" and passed with three
 # formatters missing from bootstrap. conform.lua returns its spec, so the table
-# is the spec's opts. lint.lua fills linters_by_ft inside its config function,
-# so that function runs against a stand-in for require("lint") that only keeps
-# what is assigned to it. nvim only, like the lock and parse checks: CI installs
-# it before these run.
+# is the spec's opts. nvim only, like the lock and parse checks: CI installs it
+# before these run.
+#
+# The one linter is shellcheck, and a language server is what runs it.
+# bash-language-server calls shellcheck itself whenever one is on PATH (the
+# default of its shellcheckPath setting is "shellcheck"); without one it
+# attaches all the same, reports nothing, and says why only in lsp.log --
+# measured with shellcheck taken off PATH. So bashls in lsp.lua's
+# vim.lsp.enable list means bootstrap has to install shellcheck, and that
+# pairing is named here the way gofmt's is. nvim-lint used to run shellcheck a
+# second time, on save, so every finding showed twice; it is gone, and
+# tests/test-nvim.sh asserts each finding now shows once. A lint plugin brought
+# back needs its list read here, or what it runs goes unchecked.
 #
 # Nothing read is never a pass. conform.lua is required to yield formatters,
-# lint.lua to yield linters when it is there, and every filetype in either to
-# yield at least one name: a function or an empty list in its place is reported
-# rather than counted as nothing to install. lint.lua is not itself required:
-# it is one plugin's config, and linting may stop going through it.
+# and every filetype in it to yield at least one name: a function or an empty
+# list in its place is reported rather than counted as nothing to install. The
+# enable list has to read too, or whether bashls runs cannot be said.
 boot_pkgs="$(sed -n '/^brew_install_pkgs()/,/^}/p' bootstrap.sh |
   sed -n '/local pkgs=(/,/)/p' |
   sed -e 's/#.*//' -e 's/local pkgs=(//' -e 's/)//' |
   tr -s '[:blank:]' '\n' | grep -v '^$')"
 boot_rustup="$(grep -vE '^[[:space:]]*#' bootstrap.sh | grep -cF 'sh.rustup.rs')"
 conform_lua=nvim/.config/nvim/lua/rich/plugins/conform.lua
-lint_lua=nvim/.config/nvim/lua/rich/plugins/lint.lua
+fresh_servers="$(lsp_list '/vim\.lsp\.enable({/,/})/')"
+lint_tools=""
+grep -qx bashls <<<"$fresh_servers" && lint_tools="shellcheck"
 if command -v nvim >/dev/null 2>&1; then
-  lint_arg=""
-  [ -f "$lint_lua" ] && lint_arg="$lint_lua"
-  # One line per name, "formatter black" or "linter shellcheck", and "unread
-  # formatter lua" for a filetype that yields none. A nested list is conform's
-  # older way of naming alternatives, so its names count too; keys that are
-  # not list positions, like stop_after_first, are options and are skipped.
+  # One line per name, "formatter black", and "unread formatter lua" for a
+  # filetype that yields none. A nested list is conform's older way of naming
+  # alternatives, so its names count too; keys that are not list positions,
+  # like stop_after_first, are options and are skipped.
   nvim_tools="$(printf '%s\n' 'local function names(v, out)
   for _, x in ipairs(v) do
     if type(x) == "string" then
@@ -1414,25 +1422,15 @@ end
 local ok, spec = pcall(dofile, arg[1])
 if ok and type(spec) == "table" and type(spec.opts) == "table" then
   emit("formatter", spec.opts.formatters_by_ft)
-end
-if arg[2] then
-  local lint = { linters = {}, linters_by_ft = {}, try_lint = function() end }
-  package.preload.lint = function() return lint end
-  ok, spec = pcall(dofile, arg[2])
-  if ok and type(spec) == "table" and type(spec.config) == "function" then
-    pcall(spec.config, spec, type(spec.opts) == "table" and spec.opts or {})
-  end
-  emit("linter", lint.linters_by_ft)
-end' | nvim --clean --headless -l /dev/stdin "$conform_lua" ${lint_arg:+"$lint_arg"} 2>/dev/null)"
+end' | nvim --clean --headless -l /dev/stdin "$conform_lua" 2>/dev/null)"
   conform_tools="$(printf '%s\n' "$nvim_tools" | sed -n 's/^formatter //p')"
-  lint_tools="$(printf '%s\n' "$nvim_tools" | sed -n 's/^linter //p')"
   fresh_bad=0
   if [ -z "$boot_pkgs" ] || [ -z "$conform_tools" ]; then
     bad "could not read bootstrap's brew list or conform's formatters — the comparison would be vacuous"
     fresh_bad=$((fresh_bad + 1))
   fi
-  if [ -n "$lint_arg" ] && [ -z "$lint_tools" ]; then
-    bad "read no linters out of lint.lua — whether bootstrap installs them would go unchecked"
+  if [ -z "$fresh_servers" ]; then
+    bad "could not read lsp.lua's vim.lsp.enable list — whether bootstrap installs the shellcheck bashls runs would go unchecked"
     fresh_bad=$((fresh_bad + 1))
   fi
   while read -r kind ft; do

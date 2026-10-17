@@ -695,12 +695,18 @@ mutate_adds "a recipeless target on a SECOND .PHONY line is caught" "has a recip
 
 # ---------------------------------------------------- what a fresh machine gets
 
-# A formatter conform runs that bootstrap never installs, and a linter the same.
+# A formatter conform runs that bootstrap never installs, and the linter the
+# same: shellcheck, which bashls runs.
 mutate "a formatter bootstrap does not install is caught" "formatters and linters the nvim config runs" \
   sed -i '' '/^    black$/d' bootstrap.sh
 
-mutate "a linter bootstrap does not install is caught" "formatters and linters the nvim config runs" \
+mutate "the shellcheck bashls runs, not installed by bootstrap, is caught" "formatters and linters the nvim config runs" \
   sed -i '' '/^    shellcheck$/d' bootstrap.sh
+
+# Whether bashls runs is read out of lsp.lua's enable list, so an enable list
+# that cannot be read must fail rather than mean no linter at all.
+mutate "an unreadable enable list fails rather than dropping the linter vacuously" "formatters and linters the nvim config runs" \
+  sed -i '' 's/vim\.lsp\.enable({/vim.lsp.enable_({/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
 
 # The two named exceptions have to stay conditional on what provides them, or
 # naming them would excuse them for good.
@@ -729,13 +735,6 @@ mutate "a formatter on the inner line of a multi-line entry is read" "formatters
 
 mutate "the entries after a multi-line one are read too" "formatters and linters the nvim config runs" \
   spread_and_drop nvim/.config/nvim/lua/rich/plugins/conform.lua python clang-format
-
-mutate "a linter in a multi-line entry is read" "formatters and linters the nvim config runs" \
-  spread_and_drop nvim/.config/nvim/lua/rich/plugins/lint.lua sh shellcheck
-
-# lint.lua had no guard at all: reading nothing out of it passed.
-mutate "no linters read out of lint.lua fails rather than passing vacuously" "formatters and linters the nvim config runs" \
-  sed -i '' 's/lint.linters_by_ft = {/lint.linters_for = {/' nvim/.config/nvim/lua/rich/plugins/lint.lua
 
 # A filetype that yields no name is reported, not counted as nothing to install.
 mutate "a filetype whose formatters are not a list of names is caught" "formatters and linters the nvim config runs" \

@@ -576,6 +576,93 @@ if ! contains "$out" "WEB_PROBE_DONE=true"; then
 fi
 
 echo
+echo "== each shellcheck finding in a shell script is reported once =="
+# bash-language-server runs shellcheck itself whenever one is on PATH, on open
+# and as you type. nvim-lint ran it a second time on every save, so after a
+# :write each finding sat in the buffer twice: 8 diagnostics for 4 findings in
+# the fixture below, measured, against 4 before the write. lint.lua is gone;
+# this is what keeps a second runner from coming back, whatever it is.
+#
+# The fixture has two findings on each of two lines, and is already in the
+# form shfmt writes, so format-on-save leaves the lines where they are. The
+# probe waits for bashls to report, writes the file, then waits until nothing
+# has changed the diagnostics for 2s, and counts (line, code) pairs. The code is
+# compared as a number: bashls reports SC2086 and nvim-lint reported 2086, so
+# comparing them as written would have found no duplicate at all. The write is
+# counted and at least one finding is required, so a probe that never wrote, or
+# a bashls that ran no shellcheck, cannot pass by finding nothing to repeat.
+if [ ! -x "$HOME/.local/share/nvim/mason/bin/bash-language-server" ]; then
+  printf '  \033[33mSKIP\033[0m  bash-language-server is not installed via mason\n'
+elif ! command -v shellcheck >/dev/null 2>&1; then
+  printf '  \033[33mSKIP\033[0m  shellcheck is not on PATH, so bashls has no findings to report\n'
+else
+  cat >"$SANDBOX/shdup_probe.lua" <<'LUA'
+local said, wrote = vim.uv.now(), 0
+vim.api.nvim_create_autocmd("DiagnosticChanged", {
+  callback = function()
+    said = vim.uv.now()
+  end,
+})
+vim.api.nvim_create_autocmd("BufWritePost", {
+  callback = function()
+    wrote = wrote + 1
+  end,
+})
+local function code(d)
+  return tostring(d.code or ""):match("^S?C?(%d+)$")
+end
+vim.wait(20000, function()
+  return #vim.lsp.get_clients({ bufnr = 0, name = "bashls" }) > 0
+end, 50)
+local attached = #vim.lsp.get_clients({ bufnr = 0, name = "bashls" }) > 0
+vim.wait(20000, function()
+  for _, d in ipairs(vim.diagnostic.get(0)) do
+    if code(d) then
+      return true
+    end
+  end
+  return false
+end, 50)
+vim.cmd("write")
+local at = vim.uv.now()
+vim.wait(15000, function()
+  return vim.uv.now() - at >= 1500 and vim.uv.now() - said >= 2000
+end, 50)
+local seen, found, twice = {}, 0, {}
+for _, d in ipairs(vim.diagnostic.get(0)) do
+  local c = code(d)
+  if c then
+    local key = (d.lnum + 1) .. ":SC" .. c
+    if seen[key] then
+      twice[#twice + 1] = key
+    else
+      seen[key] = true
+      found = found + 1
+    end
+  end
+end
+print(string.format("SHDUP_ATTACHED=%s SHDUP_WROTE=%d SHDUP_FINDINGS=%d SHDUP_TWICE=%d SHDUP_REPEATED=%s",
+  tostring(attached), wrote, found, #twice, table.concat(twice, ",")))
+LUA
+  # shellcheck disable=SC2016  # $foo and $bar are the fixture's findings
+  printf '#!/bin/bash\necho $foo\necho $bar\n' >"$SANDBOX/shdup.sh"
+  out="$(nv "$SANDBOX/shdup.sh" "luafile $SANDBOX/shdup_probe.lua")"
+  shdup_found="$(printf '%s' "$out" | sed -n 's/.*SHDUP_FINDINGS=\([0-9]*\).*/\1/p' | head -1)"
+  shdup_twice="$(printf '%s' "$out" | sed -n 's/.*SHDUP_TWICE=\([0-9]*\).*/\1/p' | head -1)"
+  printf '    %s finding(s) after :write, %s of them reported more than once %s\n' \
+    "${shdup_found:-an unread number of}" "${shdup_twice:-an unread number}" \
+    "$(printf '%s' "$out" | sed -n 's/.*SHDUP_REPEATED=\([^ ]*\).*/\1/p' | head -1)"
+  assert "bashls attaches to a shell script" contains "$out" "SHDUP_ATTACHED=true"
+  assert "the probe wrote the file, which is when a second runner fires (guards a vacuous pass)" \
+    contains "$out" "SHDUP_WROTE=1"
+  assert "shellcheck's findings reached the buffer (guards a vacuous pass)" [ "${shdup_found:-0}" -ge 1 ]
+  assert "no shellcheck finding is reported twice on the same line" [ "${shdup_twice:-1}" -eq 0 ]
+  if ! contains "$out" "SHDUP_FINDINGS="; then
+    printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+  fi
+fi
+
+echo
 echo "== format-on-save actually reformats =="
 # conform is configured per filetype. A formatter named for a filetype whose
 # binary is missing makes format-on-save a silent no-op for that filetype, which
