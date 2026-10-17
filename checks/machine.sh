@@ -195,6 +195,91 @@ if [ -n "$font" ]; then
   fi
 fi
 
+# tmux's restore key has to get past WezTerm. WezTerm acts on its own key
+# table before anything is sent to the pane, and that table maps Ctrl-Shift-R
+# to ReloadConfiguration, so while restore was prefix C-S-r, pressing it
+# reloaded WezTerm's config and tmux never saw it. The table is the one
+# `wezterm show-keys` prints with this repo's wezterm.lua loaded, so a key
+# wezterm.lua assigns counts as much as a default; WezTerm's copy and search
+# mode tables are left out, being active only in those modes. Saved to a file,
+# because it is read for the key and counted. A wezterm.lua that is missing or
+# does not parse is not reported by show-keys: it prints the defaults alone
+# (274 lines here, against 277 with this config) and exits 0. repo.sh's check
+# that every lua file parses is what catches that.
+#
+# The tmux key is put in WezTerm's spelling: C- is CTRL, M- is ALT, S- is
+# SHIFT, the modifiers compared as a set. A letter with Shift is looked for in
+# all three forms show-keys lists the one key under: SHIFT | CTRL r,
+# SHIFT | CTRL R, and CTRL R.
+restore_key="$(grep -E "^[[:space:]]*set .*@resurrect-restore " tmux/.config/tmux/tmux.conf 2>/dev/null |
+  tail -1 | sed -n "s/.*@resurrect-restore '\([^']*\)'.*/\1/p")"
+if ! command -v wezterm >/dev/null 2>&1; then
+  meh "wezterm not installed, cannot check that tmux's restore key gets past it"
+elif [ -z "$restore_key" ]; then
+  bad "could not read @resurrect-restore out of tmux.conf — whether WezTerm lets it through cannot be said"
+else
+  wez_keys="$(mktemp "${TMPDIR:-/tmp}/wezterm-keys.XXXXXX")"
+  WEZTERM_CONFIG_FILE="$REPO/wezterm/.config/wezterm/wezterm.lua" wezterm show-keys >"$wez_keys" 2>/dev/null
+  wez_rc=$?
+  wez_hits="$(awk -v key="$restore_key" '
+    function norm(s,   a, n, i, j, t, out) {
+      n = split(s, a, " ")
+      for (i = 2; i <= n; i++) {
+        t = a[i]
+        for (j = i - 1; j >= 1 && a[j] > t; j--) a[j + 1] = a[j]
+        a[j + 1] = t
+      }
+      out = ""
+      for (i = 1; i <= n; i++) out = out (out == "" ? "" : "+") a[i]
+      return out
+    }
+    BEGIN {
+      k = key; mods = ""; shift = 0
+      while (k ~ /^[CMS]-./) {
+        c = substr(k, 1, 1); k = substr(k, 3)
+        if (c == "C") mods = mods " CTRL"
+        else if (c == "M") mods = mods " ALT"
+        else shift = 1
+      }
+      if (k ~ /^[A-Z]$/) shift = 1
+      if (k ~ /^[A-Za-z]$/ && shift) {
+        want[norm(mods " SHIFT") " " tolower(k)] = 1
+        want[norm(mods " SHIFT") " " toupper(k)] = 1
+        want[norm(mods) " " toupper(k)] = 1
+      } else if (shift) {
+        want[norm(mods " SHIFT") " " k] = 1
+      } else {
+        want[norm(mods) " " k] = 1
+      }
+    }
+    /^Default key table/ { on = 1; next }
+    /^[^[:space:]-]/ { on = 0 }
+    on && /->/ {
+      rows++
+      left = $0; sub(/->.*/, "", left); gsub(/\|/, " ", left)
+      n = split(left, f, " ")
+      m = ""
+      for (i = 1; i < n; i++) m = m " " f[i]
+      if ((norm(m) " " f[n]) in want) {
+        line = $0; gsub(/[[:space:]]+/, " ", line); sub(/^ /, "", line)
+        print line
+      }
+    }
+    END { print "rows " rows + 0 }
+  ' "$wez_keys")"
+  rm -f "$wez_keys"
+  wez_rows="$(printf '%s\n' "$wez_hits" | sed -n 's/^rows //p')"
+  wez_taken="$(printf '%s\n' "$wez_hits" | grep -v '^rows ' | paste -sd';' -)"
+  case "$wez_rows" in '' | *[!0-9]*) wez_rows=0 ;; esac
+  if [ "$wez_rc" -ne 0 ] || [ "$wez_rows" -eq 0 ]; then
+    bad "read no rows out of WezTerm's key table (show-keys exit $wez_rc) — whether it takes tmux's restore key cannot be said"
+  elif [ -n "$wez_taken" ]; then
+    bad "WezTerm's key table takes tmux's restore key '$restore_key' for itself ($wez_taken) — pressing it never reaches tmux"
+  else
+    ok "tmux's restore key '$restore_key' is in none of WezTerm's $wez_rows key assignments, so it reaches tmux"
+  fi
+fi
+
 section "Editor tooling"
 # A formatter conform names but that is not installed makes format-on-save a
 # silent no-op for that filetype.

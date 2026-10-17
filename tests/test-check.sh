@@ -239,24 +239,61 @@ mutate "a later reset that discards the declared features is caught" "declares s
 
 # The defect this exists for: restore back on the key a held Ctrl reaches.
 mutate "restore left on resurrect's C-r default is caught" "restore is bound to" \
-  sed -i '' "s/^set -g @resurrect-restore 'C-S-r'$/set -g @resurrect-restore 'C-r'/" tmux/.config/tmux/tmux.conf
+  sed -i '' "s/^set -g @resurrect-restore 'M-r'$/set -g @resurrect-restore 'C-r'/" tmux/.config/tmux/tmux.conf
+
+# Restore is M-r, which needs no extended keys, so each of these first puts it
+# back on C-S-r, the Shift-bearing key it was on: the requirement they break is
+# one only that kind of key has.
+restore_on_c_s_r() {
+  sed -i '' "s/^set -g @resurrect-restore 'M-r'$/set -g @resurrect-restore 'C-S-r'/" tmux/.config/tmux/tmux.conf
+}
+c_s_r_without_extended_keys() {
+  restore_on_c_s_r && sed -i '' '/^set -s extended-keys on$/d' tmux/.config/tmux/tmux.conf
+}
+c_s_r_without_extkeys() {
+  restore_on_c_s_r && sed -i '' 's/:RGB:usstyle:extkeys/:RGB:usstyle/' tmux/.config/tmux/tmux.conf
+}
+c_s_r_with_extkeys_reset() { restore_on_c_s_r && split_terminal_features; }
+c_s_r_with_extended_keys_off_later() {
+  restore_on_c_s_r && printf '\nset -s extended-keys off\n' >>tmux/.config/tmux/tmux.conf
+}
 
 # Reads correct, cannot be pressed: C-S-r without extended-keys is just C-r.
 mutate "a Shift-bearing restore key without extended-keys is caught" "restore is bound to" \
-  sed -i '' '/^set -s extended-keys on$/d' tmux/.config/tmux/tmux.conf
+  c_s_r_without_extended_keys
 
 mutate "a Shift-bearing restore key without the extkeys feature is caught" "restore is bound to" \
-  sed -i '' 's/:RGB:usstyle:extkeys/:RGB:usstyle/' tmux/.config/tmux/tmux.conf
+  c_s_r_without_extkeys
 
 mutate "extkeys declared and then reset away is caught" "restore is bound to" \
-  split_terminal_features
+  c_s_r_with_extkeys_reset
 
 # Last write wins: a later extended-keys off is the value tmux applies.
 mutate "a later extended-keys off is caught" "restore is bound to" \
-  bash -c "printf '\nset -s extended-keys off\n' >> tmux/.config/tmux/tmux.conf"
+  c_s_r_with_extended_keys_off_later
 
 mutate "no @resurrect-restore at all fails rather than passing vacuously" "restore is bound to" \
   sed -i '' '/^set -g @resurrect-restore/d' tmux/.config/tmux/tmux.conf
+
+# The defect the move to M-r fixed: restore on C-S-r, which WezTerm's own key
+# table maps to ReloadConfiguration, so the key never reached tmux.
+mutate_machine "restore back on a key WezTerm keeps for itself is caught" "so it reaches tmux" \
+  restore_on_c_s_r
+
+# The table read is the one with wezterm.lua loaded, so a key it assigns
+# counts as much as one of WezTerm's defaults.
+mutate_machine "a wezterm.lua key on the restore key is caught" "so it reaches tmux" \
+  python3 -c 'p = "wezterm/.config/wezterm/wezterm.lua"; s = open(p).read()
+k = "    keys = {\n"
+open(p, "w").write(s.replace(k, k + "        { key = \"r\", mods = \"OPT\", action = wezterm.action.ReloadConfiguration },\n", 1))'
+
+mutate_machine "a restore key machine.sh cannot read fails rather than passing vacuously" "so it reaches tmux" \
+  sed -i '' "s/^set -g @resurrect-restore 'M-r'$/set -g @resurrect-restore \"M-r\"/" tmux/.config/tmux/tmux.conf
+
+# A reader gone blind to WezTerm's table, which is what a change to show-keys'
+# headings would do, reads no rows and has to fail rather than find no key.
+mutate_machine "no rows read out of WezTerm's key table fails rather than passing vacuously" "so it reaches tmux" \
+  sed -i '' 's|/^Default key table/|/^No such heading/|' checks/machine.sh
 
 # The defect this exists for: Enter and a mouse drag copying into tmux's own
 # buffer, which is a second clipboard.

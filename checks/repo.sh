@@ -497,7 +497,9 @@ fi
 # believes the terminal can do it (the extkeys terminal-feature). Drop either
 # and the binding still READS correct while becoming unreachable — the config
 # would claim a key that cannot be pressed. So any Shift-bearing restore key
-# requires both.
+# requires both. (Restore is M-r now, which needs neither: C-S-r, where it
+# was, is one WezTerm keeps for itself. Whether a key gets past WezTerm is a
+# question for the installed WezTerm, so checks/machine.sh asks it.)
 #
 # Both are read the way tmux applies them. extended-keys is the LAST line that
 # sets it, so a later `set -s extended-keys off` counts; extkeys comes from the
@@ -524,8 +526,10 @@ elif [ "$needs_ext" = yes ] && [ "$ext_on" -eq 0 ]; then
   bad "@resurrect-restore is '$restore_key', but extended-keys does not end up on (last value: '${ext_keys:-unset}') — without it that is the same byte as the plain-Ctrl key and the binding is unreachable"
 elif [ "$needs_ext" = yes ] && [ "$ext_feat" -eq 0 ]; then
   bad "@resurrect-restore is '$restore_key', but terminal-features does not end up declaring extkeys — tmux will not ask the terminal for the sequence that makes it distinct"
-else
+elif [ "$needs_ext" = yes ]; then
   ok "restore is bound to '$restore_key', off the held-Ctrl path, with the extended-keys support that makes it a key the terminal can send"
+else
+  ok "restore is bound to '$restore_key', off the held-Ctrl path, and needs no extended keys to be sent"
 fi
 
 # One clipboard, from tmux's side.

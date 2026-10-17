@@ -75,12 +75,13 @@ printf '#!/bin/sh\ncat >"%s"\n' "$CLIP_FILE" >"$CLIP_BIN/pbcopy"
 printf '#!/bin/sh\ncat "%s" 2>/dev/null\n' "$CLIP_FILE" >"$CLIP_BIN/pbpaste"
 chmod +x "$CLIP_BIN/pbcopy" "$CLIP_BIN/pbpaste"
 
-# A server carrying the real bindings, pointed at scratch storage.
+# A server carrying the real bindings, pointed at scratch storage. $1 is
+# another copy of the config, for a control that needs one changed.
 build_server() {
   t kill-server 2>/dev/null
   sleep 0.4
   t -f /dev/null new-session -d -s work -c "$TEST_TMP/work" || return 1
-  t source-file "$TEST_CONF" || return 1
+  t source-file "${1:-$TEST_CONF}" || return 1
   t set-environment -g PATH "$CLIP_BIN:$(t show-environment -g PATH | cut -d= -f2-)" || return 1
   # After sourcing, so the bindings write here and not to the real save dir.
   t set -g @resurrect-dir "$RDIR"
@@ -200,6 +201,57 @@ else
   press_keys work C-a M-s
   assert "the forced save moved 'last'" wait_until 25 last_is_not "$saved"
   assert "the force flag cleared itself" [ -z "$(t show-option -gqv @resurrect-guard-force)" ]
+fi
+
+# ---------------------------------------------------------------- prefix+M-r
+
+echo
+echo "== prefix+M-r restores, in both encodings a terminal sends it =="
+# Restore was on C-S-r, which WezTerm's own key table keeps for
+# ReloadConfiguration, so pressing it there never reached tmux. tmux.conf
+# moved it to M-r. resurrect binds that key itself, reading @resurrect-restore,
+# so its .tmux file is run against this server after the config, as tpm would
+# run it. What it restores is a synthetic save in the scratch dir, holding a
+# session nothing else here creates.
+#
+# Both encodings, because which one arrives depends on the terminal: ESC r
+# from one that sends Meta as an ESC prefix, CSI 27;3;114~ from one that tmux
+# has put in modifyOtherKeys mode. The control is the same press on a server
+# whose config still says C-S-r, which must restore nothing, so it is the
+# binding tmux.conf asks for that restores and not something else.
+RESURRECT_TMUX="$HOME/.config/tmux/plugins/tmux-resurrect/resurrect.tmux"
+CSI_M_R="$(printf '\033[27;3;114~')"
+restore_server() { # $1 = config to load; leaves a save of session sess1 as last
+  build_server "$1" || return 1
+  t run-shell "$RESURRECT_TMUX" || return 1
+  t set -g @resurrect-dir "$RDIR"
+  rm -f "$RDIR"/tmux_resurrect_*.txt "$RDIR/last"
+  make_save "$RDIR/tmux_resurrect_20260101T000000.txt" 2 1
+  ln -s tmux_resurrect_20260101T000000.txt "$RDIR/last"
+}
+if [ ! -x "$RESURRECT_TMUX" ]; then
+  section_skip "prefix+M-r: tmux-resurrect is not installed"
+else
+  for enc in ESC-r CSI; do
+    key="M-r"
+    [ "$enc" = CSI ] && key="$CSI_M_R"
+    restore_server "$TEST_CONF"
+    refute "($enc) the session in the save does not exist yet (guards a vacuous test)" \
+      session_exists sess1
+    assert "($enc) resurrect bound restore to tmux.conf's M-r" \
+      contains "$(t list-keys -T prefix M-r 2>/dev/null)" "restore.sh"
+    press_keys work C-a "$key"
+    assert "($enc) prefix then M-r restores the saved session" wait_until 20 session_exists sess1
+  done
+
+  sed "s/^set -g @resurrect-restore 'M-r'$/set -g @resurrect-restore 'C-S-r'/" \
+    "$TEST_CONF" >"$TEST_TMP/restore-c-s-r.conf"
+  refute "a copy of the config with restore on C-S-r really is different" \
+    cmp -s "$TEST_CONF" "$TEST_TMP/restore-c-s-r.conf"
+  restore_server "$TEST_TMP/restore-c-s-r.conf"
+  press_keys work C-a M-r
+  refute "...and on a server loading it, prefix then M-r restores nothing, so the test can fail" \
+    wait_until 5 session_exists sess1
 fi
 
 # ---------------------------------------------------------------- prefix+BSpace
