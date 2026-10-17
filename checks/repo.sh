@@ -816,6 +816,147 @@ if grep -q '(#q' zsh/.zshrc; then
   fi
 fi
 
+# .zshrc writes out what `brew shellenv` prints rather than running it. Running
+# it cost a bash process on every shell, and it prints nothing at all when PATH
+# already starts with brew's bin and sbin, so a shell handed such a PATH never
+# got HOMEBREW_PREFIX and loaded neither plugin. tests/test-zshrc.sh proves the
+# block sets what brew would; this catches the eval coming back. Comment lines
+# are dropped, because the block's own comment names what it replaced.
+zshrc_code="$(grep -vE '^[[:space:]]*#' zsh/.zshrc 2>/dev/null)"
+if [ -z "$zshrc_code" ]; then
+  bad "could not read any code out of zsh/.zshrc — the shellenv check would be vacuous"
+elif grep -qE 'shellenv' <<<"$zshrc_code"; then
+  bad ".zshrc runs brew shellenv — a bash process on every shell, and no HOMEBREW_PREFIX at all when PATH already starts with brew's bin"
+else
+  ok ".zshrc sets Homebrew's environment itself rather than running brew shellenv on every shell"
+fi
+
+# zle starts in vi mode when $EDITOR or $VISUAL mentions vi, and .zshrc exports
+# EDITOR=nvim, so with no keymap chosen every shell started from a shell came up
+# in vi insert mode while a fresh terminal did not. The choice has to come
+# before compinit, which binds its ^X keys into whichever keymap is current,
+# and the last one in the file is the one that holds.
+keymap="$(awk '
+  /^[[:space:]]*#/ { next }
+  /^[[:space:]]*bindkey[[:space:]]+(-e|-v|-A[[:space:]])/ {
+    sub(/#.*/, ""); gsub(/[[:space:]]+/, " "); sub(/^ /, ""); sub(/ $/, "")
+    last = NR ":" $0
+  }
+  END { print last }
+' zsh/.zshrc 2>/dev/null)"
+keymap_at="${keymap%%:*}"
+compinit_at="$(grep -m1 -nE '^[[:space:]]*compinit([[:space:]]|$)' zsh/.zshrc 2>/dev/null | cut -d: -f1)"
+if [ -z "$keymap" ]; then
+  bad ".zshrc chooses no keymap — a shell that inherits EDITOR=nvim starts in vi insert mode"
+elif [ -z "$compinit_at" ]; then
+  bad "could not find where .zshrc runs compinit — the keymap ordering check would be vacuous"
+elif [ "${keymap#*:}" != "bindkey -e" ]; then
+  bad ".zshrc's last keymap choice is '${keymap#*:}', not 'bindkey -e' (line $keymap_at)"
+elif [ "$keymap_at" -ge "$compinit_at" ]; then
+  bad "bindkey -e (line $keymap_at) comes after compinit (line $compinit_at) — compinit's ^X keys land in the keymap EDITOR picked"
+else
+  ok ".zshrc pins the emacs keymap before compinit, whatever EDITOR a shell inherits"
+fi
+
+# Without interactive_comments, a command pasted from the README with its
+# trailing comment runs the comment as arguments. Read as zsh reads option
+# names -- any case, underscores ignored, "no" negates -- and the last setopt
+# or unsetopt that names it is the one that holds.
+comments="$(awk '
+  /^[[:space:]]*#/ { next }
+  $1 == "setopt" || $1 == "unsetopt" {
+    for (i = 2; i <= NF; i++) {
+      if ($i ~ /^#/) break
+      o = tolower($i); gsub(/_/, "", o)
+      on = ($1 == "setopt")
+      if (o ~ /^no/) { o = substr(o, 3); on = !on }
+      if (o == "interactivecomments") state = (on ? "on" : "off") ":" NR
+    }
+  }
+  END { print state }
+' zsh/.zshrc 2>/dev/null)"
+case "$comments" in
+  on:*) ok ".zshrc sets interactive_comments, so a pasted command's trailing # comment stays a comment" ;;
+  off:*) bad ".zshrc turns interactive_comments off again at line ${comments#*:} — a pasted # comment becomes arguments" ;;
+  *) bad ".zshrc never sets interactive_comments — a pasted # comment becomes arguments" ;;
+esac
+
+# starship's init sets RPROMPT to a `starship prompt --right` run before every
+# prompt, and draws nothing with it unless starship.toml has a right_format.
+# .zshrc clears RPROMPT after the init when there is none, so the two files
+# have to agree. Only a top-level right_format counts: under a [table] header
+# the key belongs to that module. The last RPROMPT assignment is the one that
+# holds.
+#
+# A line inside a """ or ''' string is text, neither key nor header. Every
+# starship preset writes format as one, with lines that open with
+# [text](style); taking those for a header stopped the reader above a
+# right_format it never saw, and the check passed while RPROMPT='' hid a right
+# prompt starship really drew. Comment lines are skipped before the quotes are
+# counted, so a comment that mentions """ cannot open a string either.
+STARSHIP_TOML="starship/.config/starship.toml"
+right_format="$(awk '
+  BEGIN { sq = sprintf("%c", 39) }
+  !in_str && /^[[:space:]]*#/ { next }
+  {
+    was_in = in_str
+    s = $0
+    while (1) {
+      if (in_str) {
+        p = index(s, delim)
+        if (!p) break
+        in_str = 0
+      } else {
+        p = index(s, "\"\"\""); q = index(s, sq sq sq)
+        if (q && (!p || q < p)) { p = q; delim = sq sq sq }
+        else if (p) delim = "\"\"\""
+        else break
+        in_str = 1
+      }
+      s = substr(s, p + 3)
+    }
+    if (was_in) next
+  }
+  /^[[:space:]]*\[/ { exit }
+  /^[[:space:]]*right_format[[:space:]]*=/ { print NR }
+' "$STARSHIP_TOML" 2>/dev/null)"
+starship_init_at="$(grep -m1 -nE '^[^#]*starship init zsh' zsh/.zshrc 2>/dev/null | cut -d: -f1)"
+rprompt="$(awk '
+  /^[[:space:]]*#/ { next }
+  /^[[:space:]]*(export[[:space:]]+)?RPROMPT=/ {
+    v = $0; sub(/^[[:space:]]*(export[[:space:]]+)?RPROMPT=/, "", v)
+    sub(/[[:space:]]*(#.*)?$/, "", v)
+    last = NR ":" v
+  }
+  END { print last }
+' zsh/.zshrc 2>/dev/null)"
+rprompt_at="${rprompt%%:*}"
+rprompt_val="${rprompt#*:}"
+if [ ! -s "$STARSHIP_TOML" ]; then
+  bad "could not read $STARSHIP_TOML — the RPROMPT check would be vacuous"
+elif [ -z "$starship_init_at" ]; then
+  bad "could not find starship init in .zshrc — the RPROMPT check would be vacuous"
+elif [ -n "$right_format" ]; then
+  if [ -n "$rprompt" ] && [ "$rprompt_at" -gt "$starship_init_at" ]; then
+    bad "starship.toml sets right_format (line $right_format) but .zshrc replaces RPROMPT after starship init (line $rprompt_at) — starship's right prompt never draws"
+  else
+    ok "starship.toml has a right_format, and .zshrc leaves starship's RPROMPT alone"
+  fi
+elif [ -z "$rprompt" ]; then
+  bad "starship.toml has no right_format, and .zshrc never clears RPROMPT — every prompt forks a starship that draws nothing"
+elif [ "$rprompt_at" -le "$starship_init_at" ]; then
+  bad ".zshrc clears RPROMPT (line $rprompt_at) before starship init (line $starship_init_at), which sets it again"
+else
+  case "$rprompt_val" in
+    "''" | '""' | "")
+      ok ".zshrc clears RPROMPT after starship init, as starship.toml has no right_format"
+      ;;
+    *)
+      bad ".zshrc's last RPROMPT assignment (line $rprompt_at) is $rprompt_val, not '' — starship.toml has no right_format"
+      ;;
+  esac
+fi
+
 section "Known shell traps"
 # A pipeline ending in a quiet grep, under `set -o pipefail`: grep exits on the
 # first match, the producer takes SIGPIPE, and the pipeline reports FAILURE even

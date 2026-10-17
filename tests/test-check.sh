@@ -396,6 +396,75 @@ mutate "(#q...) without extendedglob is caught" "extendedglob" \
 mutate "a broken .zshrc is caught" ".zshrc parses" \
   bash -c 'printf "\nif then fi done\n" >> zsh/.zshrc'
 
+# The defect this exists for: the per-shell eval coming back, and with it the
+# empty output that left HOMEBREW_PREFIX unset.
+# shellcheck disable=SC2016  # the $( ) is text appended to .zshrc, not run here
+mutate "brew shellenv run from .zshrc again is caught" "rather than running brew shellenv" \
+  bash -c 'printf "\neval \"\$(/opt/homebrew/bin/brew shellenv)\"\n" >> zsh/.zshrc'
+
+# The defect this exists for: no keymap chosen, so EDITOR=nvim picks vi mode.
+mutate "no bindkey -e in .zshrc is caught" "pins the emacs keymap" \
+  sed -i '' '/^bindkey -e$/d' zsh/.zshrc
+
+# Chosen after compinit, which has already bound its ^X keys elsewhere.
+mutate "bindkey -e moved below compinit is caught" "pins the emacs keymap" \
+  bash -c "sed -i '' '/^bindkey -e\$/d' zsh/.zshrc && printf '\nbindkey -e\n' >> zsh/.zshrc"
+
+# Last write wins: a later bindkey -v is the keymap every shell gets.
+mutate "a later bindkey -v is caught" "pins the emacs keymap" \
+  bash -c 'printf "\nbindkey -v\n" >> zsh/.zshrc'
+
+mutate "no findable compinit fails the keymap order rather than passing vacuously" "pins the emacs keymap" \
+  sed -i '' 's/^\([[:space:]]*\)compinit/\1: compinit/' zsh/.zshrc
+
+mutate "no interactive_comments in .zshrc is caught" "sets interactive_comments" \
+  sed -i '' '/^setopt interactive_comments$/d' zsh/.zshrc
+
+# Last write wins, in any of the spellings zsh accepts for turning it off.
+mutate "interactive_comments unset again later is caught" "sets interactive_comments" \
+  bash -c 'printf "\nunsetopt INTERACTIVE_COMMENTS\n" >> zsh/.zshrc'
+
+mutate "interactive_comments negated again later is caught" "sets interactive_comments" \
+  bash -c 'printf "\nsetopt autocd no_interactivecomments\n" >> zsh/.zshrc'
+
+# The defect this exists for: a starship forked before every prompt to draw an
+# empty right prompt.
+mutate "starship's RPROMPT left in place is caught" "clears RPROMPT after starship init" \
+  sed -i '' "/^  RPROMPT=''$/d" zsh/.zshrc
+
+# And the other way round: a right_format that .zshrc would hide. At the top of
+# the file, because under a [table] header the key belongs to that module.
+# shellcheck disable=SC2016  # $directory is starship's, written into the file
+mutate "a right_format that .zshrc hides is caught" "clears RPROMPT after starship init" \
+  bash -c '{ printf "right_format = \"\$directory\"\n"; cat starship/.config/starship.toml; } >toml.tmp &&
+    mv toml.tmp starship/.config/starship.toml'
+
+# The same key below format written as a """ string, the way every starship
+# preset writes it. Its lines open with [text](style), and a reader that took
+# those for a [table] header stopped there and never saw the key.
+# shellcheck disable=SC2016  # $time is starship's, written into the file
+mutate "a right_format below a multi-line format is caught" "clears RPROMPT after starship init" \
+  python3 -c 'p = "starship/.config/starship.toml"; s = open(p).read().split("\n")
+i = [n for n, l in enumerate(s) if l.startswith("format = \"")][0]
+body = s[i][len("format = \""):-1]
+s[i:i + 1] = ["format = \"\"\"", "[](cyan)\\", body + "\"\"\"", "right_format = \"$time\""]
+open(p, "w").write("\n".join(s))'
+
+# And below a comment that mentions """, which must not open a string that
+# swallows the rest of the file.
+mutate "a right_format below a comment quoting \"\"\" is caught" "clears RPROMPT after starship init" \
+  bash -c '{ printf "# format can be a \"\"\" string\nright_format = \"x\"\n"; cat starship/.config/starship.toml; } >toml.tmp &&
+    mv toml.tmp starship/.config/starship.toml'
+
+# Cleared before the init, which sets it again.
+mutate "RPROMPT cleared before starship init is caught" "clears RPROMPT after starship init" \
+  python3 -c 'p = "zsh/.zshrc"; q = chr(39) * 2; s = open(p).read().split("\n")
+s.remove("  RPROMPT=" + q); s.insert(2, "RPROMPT=" + q); open(p, "w").write("\n".join(s))'
+
+# Last write wins: a later RPROMPT is the one every prompt runs.
+mutate "a later RPROMPT assignment is caught" "clears RPROMPT after starship init" \
+  bash -c "printf '\nRPROMPT=%s\n' \"'%T'\" >> zsh/.zshrc"
+
 # The injected line is assembled from a format string rather than written
 # literally: spelled out, it is itself the hazard, and check.sh would flag this
 # file for containing its own test data.
