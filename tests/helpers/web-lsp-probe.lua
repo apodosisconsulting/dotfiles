@@ -6,6 +6,8 @@
 --   main.js     ts_ls finds greet's definition in the util.js beside it
 --   style.css   cssls flags `colr` as an unknown property
 --   index.html  html offers div as an element to open
+--   list.html   emmet_language_server offers ul>li.item*3 expanded: a ul
+--               holding three li of class item
 --
 -- Run as `nvim --headless -c 'luafile web-lsp-probe.lua'`. It cds into its own
 -- folder, deletes it on the way out and quits nvim itself. Every line it prints
@@ -55,6 +57,7 @@ vim.fn.writefile(
 vim.fn.writefile({ 'import { greet } from "./util.js";', 'greet("x");' }, dir .. "/main.js")
 vim.fn.writefile({ "body { colr: red; }" }, dir .. "/style.css")
 vim.fn.writefile({ "<!doctype html>", "<html><body>", "<" }, dir .. "/index.html")
+vim.fn.writefile({ "<!doctype html>", "<html><body>", "ul>li.item*3" }, dir .. "/list.html")
 
 -- By path rather than on PATH: mason puts its bin dir on PATH when it loads,
 -- and nothing has loaded it yet.
@@ -154,6 +157,30 @@ else
     local buf, client = open(dir .. "/index.html", "html")
     emit("WEB_HTML_ATTACHED", client ~= nil)
     emit("WEB_HTML_COMPLETES_ELEMENT", client ~= nil and completes(client, buf, 2, 1, "div"))
+end
+
+-- Emmet. The abbreviation offered back as itself would prove nothing, so the
+-- item has to carry the expansion: the text it puts in place of the
+-- abbreviation holds a ul and three li of class item.
+if not installed("emmet-language-server") then
+    emit("WEB_EMMET", "SKIP")
+else
+    local buf, client = open(dir .. "/list.html", "emmet_language_server")
+    emit("WEB_EMMET_ATTACHED", client ~= nil)
+    emit(
+        "WEB_EMMET_EXPANDS",
+        client ~= nil
+            and answers(client, buf, "textDocument/completion", 2, #"ul>li.item*3", function(result)
+                for _, it in ipairs(result and (result.items or result) or {}) do
+                    local text = it.textEdit and it.textEdit.newText or it.insertText or ""
+                    local _, items = text:gsub('<li class="item">', "")
+                    if text:find("<ul>", 1, true) and items == 3 then
+                        return true
+                    end
+                end
+                return false
+            end)
+    )
 end
 
 finish()

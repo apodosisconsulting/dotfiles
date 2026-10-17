@@ -180,6 +180,46 @@ assert "and the script carries on rather than aborting the bootstrap" \
   contains "$out" "REACHED_END"
 
 echo
+echo "== go tools: goimports is built with go install =="
+# conform.lua formats Go with goimports, which no Homebrew formula provides.
+reset_stubs
+make_stub go 0
+out="$(
+  PATH="$STUB:$PATH" HOME="$FAKE_HOME" bash -c "
+    source '$BOOT'
+    install_go_tools
+  " 2>&1
+)"
+assert "it go-installs goimports" called "go install golang.org/x/tools/cmd/goimports@latest"
+
+reset_stubs
+make_stub go 1
+out="$(
+  PATH="$STUB:$PATH" HOME="$FAKE_HOME" bash -c "
+    source '$BOOT'
+    install_go_tools
+    echo REACHED_END
+  " 2>&1
+)"
+assert "a failing go install warns" contains "$out" "WARN"
+assert "...and the bootstrap carries on" contains "$out" "REACHED_END"
+
+# No go at all: a PATH of the stubs, less the go one reset_stubs leaves, and
+# the system dirs, which have no go either. bash comes from /bin.
+reset_stubs
+rm -f "$STUB/go"
+out="$(
+  PATH="$STUB:/usr/bin:/bin" HOME="$FAKE_HOME" /bin/bash -c "
+    source '$BOOT'
+    install_go_tools
+    echo REACHED_END
+  " 2>&1
+)"
+assert "with no go, it says goimports was not installed" contains "$out" "neither is goimports"
+assert "...and carries on" contains "$out" "REACHED_END"
+refute "...having run no go install" called "go install"
+
+echo
 echo "== rust: a no-op when the toolchain is already present =="
 reset_stubs
 out="$(

@@ -493,6 +493,119 @@ else
 fi
 
 echo
+echo "== gd, gD, gi and gr are the server's where there is one, Vim's where not =="
+# lsp.lua sets the four when a server attaches, for that buffer alone, and gr
+# with nowait: Neovim maps gra, gri, grn, grr and grt globally, so a gr that
+# waited would sit out timeoutlen on every press to see whether one of those
+# was being typed. checks/repo.sh reads lsp.lua; this reads the maps a running
+# nvim ends up with, every plugin included.
+#
+# A mapping that STARTS with gd, gD or gi would make that key wait in the same
+# way, so none may exist, in the buffer or globally. gr's own prefixes are the
+# five above, which its nowait outruns.
+cat >"$SANDBOX/gkeys_probe.lua" <<'LUA'
+local out = {}
+local function m(lhs)
+  return vim.fn.maparg(lhs, "n", false, true)
+end
+vim.wait(20000, function() return #vim.lsp.get_clients({ bufnr = 0 }) > 0 end, 100)
+out[#out + 1] = "GK_CLIENTS=" .. #vim.lsp.get_clients({ bufnr = 0 })
+for _, k in ipairs({ "gd", "gD", "gi", "gr" }) do
+  local x = m(k)
+  out[#out + 1] = string.format("GK_%s=%s,%s,%s", k, tostring(x.buffer), tostring(x.nowait),
+    (x.desc or "none"):gsub(" ", "_"))
+end
+local longer = {}
+for _, map in ipairs(vim.list_extend(vim.api.nvim_get_keymap("n"), vim.api.nvim_buf_get_keymap(0, "n"))) do
+  if #map.lhs > 2 and vim.tbl_contains({ "gd", "gD", "gi" }, map.lhs:sub(1, 2)) then
+    longer[#longer + 1] = map.lhs
+  end
+end
+out[#out + 1] = "GK_LONGER=[" .. table.concat(longer, ",") .. "]"
+print(table.concat(out, " "))
+LUA
+if [ -x "$HOME/.local/share/nvim/mason/bin/lua-language-server" ]; then
+  out="$(nv "$SANDBOX/start.lua" "luafile $SANDBOX/gkeys_probe.lua")"
+  assert "lua_ls attached to the buffer the maps are read in (guards a vacuous pass)" \
+    contains "$out" "GK_CLIENTS=1"
+  assert "gd goes to the definition, in that buffer alone" contains "$out" "GK_gd=1,0,Go_to_definition"
+  assert "gD goes to the type definition, in that buffer alone" \
+    contains "$out" "GK_gD=1,0,Go_to_type_definition"
+  assert "gi goes to the implementation, in that buffer alone" \
+    contains "$out" "GK_gi=1,0,Go_to_implementation"
+  assert "gr lists references, in that buffer alone, without waiting for gr*" \
+    contains "$out" "GK_gr=1,1,References"
+  assert "no mapping starts with gd, gD or gi, so none of them waits either" \
+    contains "$out" "GK_LONGER=[]"
+else
+  printf '  \033[33mSKIP\033[0m  lua-language-server is not installed via mason, so no buffer has a server\n'
+fi
+# Markdown has no server here. Vim's gi inserts where insert last stopped, and
+# its gd goes to the first use of the word under the cursor; both are typed, so
+# a map of any kind in their place fails, and so does a probe that typed
+# nothing.
+printf 'foo\ntwo\nthree foo\n' >"$SANDBOX/gkeys.md"
+out="$(nv "$SANDBOX/gkeys.md" \
+  'lua vim.wait(1500)' \
+  'lua local e = {} for _, k in ipairs({ "gd", "gD", "gi", "gr" }) do if vim.tbl_isempty(vim.fn.maparg(k, "n", false, true)) then e[#e + 1] = k end end print("GK_UNMAPPED=" .. table.concat(e, ",") .. " GK_MD_CLIENTS=" .. #vim.lsp.get_clients({ bufnr = 0 }))' \
+  'lua vim.api.nvim_win_set_cursor(0, { 3, 6 }) vim.api.nvim_feedkeys(vim.keycode("gd"), "x", false) print("GK_GD_LINE=" .. vim.fn.line("."))' \
+  'lua vim.api.nvim_feedkeys(vim.keycode("3GA!<Esc>gggiX<Esc>"), "x", false) print("GK_GI_LINE3=" .. vim.fn.getline(3))')"
+assert "the markdown buffer has no server (guards a vacuous pass)" contains "$out" "GK_MD_CLIENTS=0"
+assert "...and none of gd, gD, gi or gr is mapped there" contains "$out" "GK_UNMAPPED=gd,gD,gi,gr"
+assert "Vim's own gd goes to the first use of the word" contains "$out" "GK_GD_LINE=1"
+assert "Vim's own gi inserts where insert last stopped" contains "$out" "GK_GI_LINE3=three foo!X"
+
+echo
+echo "== only lsp.lua's enable list starts a language server =="
+# checks/repo.sh reads automatic_enable = false out of lsp.lua. This asks a
+# running nvim, once every plugin has had its turn, which servers are enabled,
+# and requires exactly the names in lsp.lua's vim.lsp.enable list. While
+# automatic_enable was on, mason-lspconfig also enabled every server Mason had
+# installed, so a server taken out of that list went on starting.
+#
+# Asked of every lsp/*.lua config on the runtime path, which is where
+# lspconfig's live. A .txt is opened so lspconfig loads and no server starts.
+# LC_ALL=C because lua sorts by byte, and a locale's sort can skip the _.
+lsp_listed="$(sed -n '/vim\.lsp\.enable({/,/})/p' "$NVIM_CONFIG/lua/rich/plugins/lsp.lua" |
+  grep -vE '^[[:space:]]*--' | grep -oE '"[a-z_]+"' | tr -d '"' | LC_ALL=C sort -u | paste -sd, -)"
+: >"$SANDBOX/enabled.txt"
+out="$(nv "$SANDBOX/enabled.txt" \
+  'lua local n = {} for _, f in ipairs(vim.api.nvim_get_runtime_file("lsp/*.lua", true)) do local s = vim.fn.fnamemodify(f, ":t:r") if vim.lsp.is_enabled(s) then n[s] = true end end n = vim.tbl_keys(n) table.sort(n) print("LSP_ENABLED=" .. table.concat(n, ","))')"
+lsp_enabled_now="$(printf '%s' "$out" | tr -d '\r' | grep -o 'LSP_ENABLED=[^[:space:]]*' | head -1 | sed 's/^LSP_ENABLED=//')"
+printf '    lsp.lua lists %s\n    nvim enabled  %s\n' "${lsp_listed:-nothing}" "${lsp_enabled_now:-nothing}"
+if [ -z "$lsp_listed" ] || [ -z "$lsp_enabled_now" ]; then
+  no "could not read lsp.lua's enable list or nvim's enabled servers — the comparison would be vacuous"
+else
+  assert "nvim enables exactly the servers lsp.lua lists, and none Mason merely has" \
+    [ "$lsp_enabled_now" = "$lsp_listed" ]
+fi
+
+echo
+echo "== rust-analyzer is rustup's, not Mason's =="
+# Mason puts its bin dir first on nvim's PATH, so lsp.lua names rustup's proxy
+# by path; a bare "rust-analyzer" resolved to Mason's build wherever Mason had
+# one. exepath is how nvim itself decides the command can run. The second
+# probe points CARGO_HOME at a stand-in, which needs no rustup, so the path is
+# shown to follow it rather than to be ~/.cargo written in. The expected paths
+# go through tr -s / because vim.fs.joinpath drops a doubled slash, and
+# $TMPDIR on macOS ends in one.
+ra_probe='lua local c = vim.lsp.config.rust_analyzer.cmd print("RA_EXE=[" .. vim.fn.exepath(c[1]) .. "]")'
+cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+if [ -x "$cargo_bin/rust-analyzer" ]; then
+  out="$(nv "$SANDBOX/start.lua" "$ra_probe")"
+  assert "nvim runs rust-analyzer from $cargo_bin, rustup's" \
+    contains "$out" "RA_EXE=[$(printf '%s' "$cargo_bin/rust-analyzer" | tr -s /)]"
+else
+  printf '  \033[33mSKIP\033[0m  there is no rustup rust-analyzer in %s\n' "$cargo_bin"
+fi
+mkdir -p "$TEST_TMP/cargo/bin"
+printf '#!/bin/sh\n' >"$TEST_TMP/cargo/bin/rust-analyzer"
+chmod +x "$TEST_TMP/cargo/bin/rust-analyzer"
+out="$(CARGO_HOME="$TEST_TMP/cargo" nv "$SANDBOX/start.lua" "$ra_probe")"
+assert "...and from \$CARGO_HOME/bin when CARGO_HOME is set" \
+  contains "$out" "RA_EXE=[$(printf '%s' "$TEST_TMP/cargo/bin/rust-analyzer" | tr -s /)]"
+
+echo
 echo "== pyright resolves what a folder of loose scripts imports =="
 # lsp.lua gives pyright two things lspconfig does not: the file's own folder as
 # its root where no project marker is found, and the folder's .venv when no venv
@@ -572,6 +685,10 @@ fi
 if web_server WEB_HTML html; then
   assert "html attaches to a .html file" contains "$out" "WEB_HTML_ATTACHED=true"
   assert "...and completes an element name" contains "$out" "WEB_HTML_COMPLETES_ELEMENT=true"
+fi
+if web_server WEB_EMMET emmet_language_server; then
+  assert "emmet_language_server attaches to a .html file" contains "$out" "WEB_EMMET_ATTACHED=true"
+  assert "...and offers ul>li.item*3 expanded, as a completion" contains "$out" "WEB_EMMET_EXPANDS=true"
 fi
 # The tokens vanish as a set when the probe dies; say what nvim said instead.
 if ! contains "$out" "WEB_PROBE_DONE=true"; then
@@ -667,6 +784,73 @@ LUA
 fi
 
 echo
+echo "== Go gets a working gopls, in a module and in a folder of loose files =="
+# tests/helpers/go-lsp-probe.lua builds a module, a folder of loose .go files
+# with no go.mod, and a .go directly in HOME, and prints KEY=value lines.
+#
+# The loose folder is asked about a file created AFTER main.go was opened, for
+# the reason the pyright section gives: one that already exists resolves with
+# no root at all (the probe checks that too), so only a file that appears
+# afterwards shows whether gopls has a workspace folder to watch.
+#
+# Not nv(), for the reasons given at the pyright probe above.
+out="$(TMPDIR="$TEST_TMP" PATH="$CLIP_BIN:$PATH" XDG_STATE_HOME="$STATE" XDG_CACHE_HOME="$CACHE" \
+  nvim --headless -c "luafile $REPO_ROOT/tests/helpers/go-lsp-probe.lua" 2>&1)"
+if contains "$out" "GO=SKIP_NO_GO"; then
+  printf '  \033[33mSKIP\033[0m  gopls is installed but there is no go command for it to run\n'
+elif contains "$out" "GO=SKIP"; then
+  printf '  \033[33mSKIP\033[0m  gopls is not installed via mason\n'
+elif contains "$out" "GO_NO_MARKER_ABOVE=false"; then
+  printf '  \033[33mSKIP\033[0m  a go.work, go.mod or .git sits above %s, so the loose-folder case cannot be set up\n' "$TEST_TMP"
+else
+  assert "gopls attaches to a .go file in a module" contains "$out" "GO_MOD_ATTACHED=true"
+  assert "...rooted at the module" contains "$out" "GO_MOD_ROOT_IS_MODULE=true"
+  assert "...completes a standard library member, strings.ToUpper" contains "$out" "GO_MOD_COMPLETES_STDLIB=true"
+  assert "...and reports the compiler's unused-variable error" contains "$out" "GO_MOD_DIAGNOSES=true"
+  assert "staticcheck is on in the settings gopls was started with" contains "$out" "GO_STATICCHECK=true"
+  assert "...and reports S1002, which gopls's default subset leaves out" \
+    contains "$out" "GO_STATICCHECK_S1002=true"
+  assert "...but not ST1000, which staticcheck itself leaves off" contains "$out" "GO_STATICCHECK_NO_ST1000=true"
+  assert "...nor ST1003, which it leaves off too" contains "$out" "GO_STATICCHECK_NO_ST1003=true"
+  go_api="$(printf '%s' "$out" | sed -n 's/^GO_API_OPTIONS=\([0-9]*\).*/\1/p' | head -1)"
+  go_sent="$(printf '%s' "$out" | sed -n 's/^GO_SETTINGS_SENT=\([0-9]*\).*/\1/p' | head -1)"
+  printf '    %s gopls settings sent, checked against the %s options gopls api-json lists\n' \
+    "${go_sent:-0}" "${go_api:-0}"
+  # Both counts default to 0, which neither assertion accepts.
+  assert "gopls api-json was read (guards a vacuous pass)" [ "${go_api:-0}" -gt 0 ]
+  assert "...and lsp.lua sends settings for it to judge" [ "${go_sent:-0}" -gt 0 ]
+  assert "every gopls setting lsp.lua sends is a name gopls knows" contains "$out" "GO_SETTINGS_UNKNOWN=[]"
+  assert "inlay hints are off until asked for" contains "$out" "GO_HINTS_OFF_AT_START=true"
+  assert "<leader>lh turns them on" contains "$out" "GO_HINTS_TOGGLED_ON=true"
+  assert "...and gopls sends the parameter-name hints lsp.lua asks for" contains "$out" "GO_HINTS_DRAWN=true"
+  assert ".gohtml and .gotmpl are Go templates, filetype gotmpl" \
+    contains "$out" "GO_FT_gohtml=gotmpl"
+  assert "...both of them" contains "$out" "GO_FT_gotmpl=gotmpl"
+  assert ".tmpl stays Neovim's template, whose syntax is HTML's" contains "$out" "GO_FT_tmpl=template"
+  assert "gopls's templateExtensions are those, all of them gotmpl" \
+    contains "$out" "GO_TEMPLATE_EXTENSIONS_ARE_GOTMPL=true"
+  assert "gopls attaches to a .gohtml" contains "$out" "GO_TEMPLATE_ATTACHED=true"
+  assert "...and reports the template's parse error" contains "$out" "GO_TEMPLATE_PARSE_ERROR=true"
+  assert "gopls attaches in a folder of loose .go files with no go.mod" contains "$out" "GO_LOOSE_ATTACHED=true"
+  assert "...rooted at that folder" contains "$out" "GO_LOOSE_ROOT_IS_FILE_DIR=true"
+  assert "...flags a call to a function no file defines yet (guards a vacuous pass)" \
+    contains "$out" "GO_LOOSE_FLAGS_MISSING_BEFORE=true"
+  assert "...while one in a file already beside it resolves" contains "$out" "GO_LOOSE_SEES_EXISTING_SIBLING=true"
+  assert "...and the call resolves once a file defining it appears beside it" \
+    contains "$out" "GO_LOOSE_RESOLVES_AFTER_CREATE=true"
+  printf '    resolved %sms after the file appeared\n' \
+    "$(printf '%s' "$out" | sed -n 's/^GO_LOOSE_RESOLVE_MS=\([0-9]*\).*/\1/p' | head -1)"
+  assert "a .go directly in HOME still gets gopls" contains "$out" "GO_HOME_ATTACHED=true"
+  assert "...but no root, so gopls does not load the whole home directory" \
+    contains "$out" "GO_HOME_STAYS_ROOTLESS=true"
+fi
+# The tokens vanish as a set when the probe dies; say what nvim said instead.
+if ! contains "$out" "GO_PROBE_DONE=true"; then
+  no "the Go language server probe did not run to the end"
+  printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300)"
+fi
+
+echo
 echo "== format-on-save actually reformats =="
 # conform is configured per filetype. A formatter named for a filetype whose
 # binary is missing makes format-on-save a silent no-op for that filetype, which
@@ -747,6 +931,18 @@ format_check json '{"a":1,   "b":2}
 ' prettier
 format_check scss '.a{.b{color:red}}
 ' prettier
+# goimports, whose point over gofmt is the imports: saved, the file has to
+# gain the two it uses and lose the one it does not, as well as being gofmt'd.
+# A gofmt, or gopls formatting in its place, would leave the import block as
+# it was, and that is the text this compares against.
+format_check go 'package main
+
+import "os"
+
+func main()  {
+        fmt.Println(strings.ToUpper("a"))
+}
+' goimports "$(printf 'package main\n\nimport (\n\t"fmt"\n\t"strings"\n)\n\nfunc main() {\n\tfmt.Println(strings.ToUpper("a"))\n}\n')"
 
 echo
 echo "== treesitter is set up, not just highlighting =="
@@ -1011,7 +1207,7 @@ echo "== the whole set of leader mappings, by name =="
 # When this fails it is usually not a bug: you added or removed a mapping and
 # this is the line that records it. Update the list and the diff says which key
 # changed, which is the point.
-EXPECTED_LEADER_N="<leader>9s,<leader>9x,<leader>Q,<leader>Y,<leader>ca,<leader>cf,<leader>d,<leader>e,<leader>fb,<leader>fd,<leader>ff,<leader>fg,<leader>fh,<leader>fo,<leader>fr,<leader>fs,<leader>gs,<leader>h1,<leader>h2,<leader>h3,<leader>h4,<leader>ha,<leader>hh,<leader>hr,<leader>ld,<leader>lq,<leader>q,<leader>rn,<leader>s,<leader>tt,<leader>u,<leader>w,<leader>x,<leader>y"
+EXPECTED_LEADER_N="<leader>9s,<leader>9x,<leader>Q,<leader>Y,<leader>ca,<leader>cf,<leader>d,<leader>e,<leader>fb,<leader>fd,<leader>ff,<leader>fg,<leader>fh,<leader>fo,<leader>fr,<leader>fs,<leader>gs,<leader>h1,<leader>h2,<leader>h3,<leader>h4,<leader>ha,<leader>hh,<leader>hr,<leader>ld,<leader>lh,<leader>lq,<leader>q,<leader>rn,<leader>s,<leader>tt,<leader>u,<leader>w,<leader>x,<leader>y"
 
 # Visual mode as well as normal, because they are declared separately and go
 # missing separately: <leader>9v is visual-only, so the normal-mode list above

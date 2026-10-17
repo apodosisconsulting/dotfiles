@@ -40,7 +40,13 @@ return {
             markdown = { "prettier" },
             sh = { "shfmt" },
             bash = { "shfmt" },
-            go = { "gofmt" },
+            -- goimports rather than gofmt: it formats as gofmt does, and also
+            -- adds the imports a file has started to use and drops the ones it
+            -- no longer does, on every save. bootstrap.sh installs it with go
+            -- install, into ~/go/bin, which .zshrc puts on PATH. Without it,
+            -- lsp_format = "fallback" below has gopls format instead, which
+            -- leaves imports alone.
+            go = { "goimports" },
             rust = { "rustfmt" },
             c = { "clang-format" },
             cpp = { "clang-format" },

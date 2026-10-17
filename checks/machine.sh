@@ -290,10 +290,19 @@ section "Editor tooling"
 # ordinary way conform is configured. Taking the quoted strings off each `= {`
 # line covers the whole list; a filetype whose KEY needed quoting would show up
 # as a formatter that is not installed, which is loud rather than silent.
+#
+# goimports is built by `go install`, into GOBIN or the first GOPATH entry's
+# bin (~/go/bin by default), and .zshrc puts that directory on PATH. Found
+# there but not on PATH -- a hook started by a git client that never ran
+# .zshrc -- it is said so: an nvim started the same way would not find it.
+gobin="${GOBIN:-${GOPATH:-$HOME/go}}"
+[ -n "${GOBIN:-}" ] || gobin="${gobin%%:*}/bin"
 for f in $(sed -n '/formatters_by_ft/,/^ *}/p' nvim/.config/nvim/lua/rich/plugins/conform.lua |
   grep '= {' | grep -oE '"[^"]+"' | tr -d '"' | sort -u); do
   if command -v "$f" >/dev/null 2>&1 || [ -x "$HOME/.local/share/nvim/mason/bin/$f" ]; then
     ok "formatter $f is available"
+  elif [ -x "$gobin/$f" ]; then
+    meh "formatter $f is in $gobin, which is not on PATH here — an nvim started from this environment will not find it"
   else
     meh "formatter $f is not on PATH or in mason — format-on-save is a no-op for its filetypes"
   fi

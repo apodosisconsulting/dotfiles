@@ -414,10 +414,11 @@ fi
 # They are two lists in lsp.lua with nothing holding them together. A server
 # added to vim.lsp.enable and not to ensure_installed works on this machine,
 # where Mason already has it, and on a new one never attaches. A server added
-# only to ensure_installed runs because mason-lspconfig's automatic_enable
-# starts whatever Mason has installed, and stops the day that is turned off.
-# Neither says so: the buffer just has no language server. rust_analyzer may
-# be on the enable side alone, because it comes from rustup, not Mason.
+# only to ensure_installed is downloaded on every machine and never runs:
+# automatic_enable is off (asserted below), so nothing but the enable list
+# starts one. Neither says so: the buffer just has no language server.
+# rust_analyzer may be on the enable side alone, because it comes from rustup,
+# not Mason.
 #
 # One vim.lsp.enable call, too: lua's last write wins, so a second one anywhere
 # in the config -- vim.lsp.enable(name, false) turns a server off -- would make
@@ -435,11 +436,40 @@ if [ -z "$lsp_installed" ] || [ -z "$lsp_enabled" ]; then
 elif [ -n "$lsp_only_enabled" ]; then
   bad "$LSP starts $lsp_only_enabled but Mason never installs it, so on a new machine it never attaches"
 elif [ -n "$lsp_only_installed" ]; then
-  bad "Mason installs $lsp_only_installed but $LSP never starts it, so it runs only while automatic_enable is on"
+  bad "Mason installs $lsp_only_installed but $LSP never starts it, so it is downloaded on every machine and never runs"
 elif [ "${lsp_calls:-0}" -ne 1 ]; then
   bad "the nvim config calls vim.lsp.enable ${lsp_calls:-0} times, not once, so lsp.lua's list is not the whole story"
 else
   ok "Mason installs every language server lsp.lua starts, and lsp.lua starts all $(printf '%s\n' "$lsp_installed" | grep -c .) it installs"
+fi
+
+# Nothing but that enable list starts a server: mason-lspconfig's
+# automatic_enable is off, and nothing turns it back on.
+#
+# mason-lspconfig defaults it to on, and then runs vim.lsp.enable for every
+# server Mason has installed, so the list compared above was not the whole
+# story: a server installed from :Mason started with nothing here naming it.
+# Its settings are merged across setup() calls, so the last value written is
+# the one used, and a second assignment anywhere in the config -- another
+# setup() call, a lazy opts table -- could be that one. So there must be
+# exactly one, inside lsp.lua's setup() call, and it must be false: a table is
+# mason-lspconfig's way of turning it on for some servers. tests/test-nvim.sh
+# asks a running nvim which servers are enabled.
+mlc_block="$(sed -n '/require("mason-lspconfig")\.setup({/,/^[[:space:]]*})/p' "$LSP" | grep -vE '^[[:space:]]*--')"
+mlc_value="$(printf '%s\n' "$mlc_block" |
+  sed -n 's/^[[:space:]]*automatic_enable[[:space:]]*=[[:space:]]*\([^,[:space:]]*\).*/\1/p')"
+mlc_writes="$(grep -rnE 'automatic_enable[[:space:]]*=' nvim/.config/nvim --include='*.lua' |
+  grep -cvE '^[^:]*:[0-9]+:[[:space:]]*--')"
+if [ -z "$mlc_block" ]; then
+  bad "could not find require(\"mason-lspconfig\").setup({ in $LSP — whether automatic_enable is off cannot be said"
+elif [ -z "$mlc_value" ]; then
+  bad "$LSP's mason-lspconfig setup() leaves automatic_enable out, so it defaults to on and every server Mason has installed starts, listed or not"
+elif [ "$mlc_value" != false ]; then
+  bad "$LSP sets automatic_enable = $mlc_value, not false, so servers Mason has installed start whether or not lsp.lua lists them"
+elif [ "${mlc_writes:-0}" -ne 1 ]; then
+  bad "the nvim config sets automatic_enable ${mlc_writes:-0} times, not once — mason-lspconfig keeps the last value written, so lsp.lua's false may not be it"
+else
+  ok "mason-lspconfig's automatic_enable is false, so only lsp.lua's enable list starts a language server"
 fi
 
 # A count on ]q [q ]d [d.
@@ -497,6 +527,35 @@ elif [ -n "$cr_first" ]; then
   printf '%s\n' "$cr_first" | sed 's/^/      /'
 else
   ok "Enter in the completion menu confirms only a selected item, so with none it is a newline"
+fi
+
+# gd, gD, gi and gr belong to the buffer a server attaches to, and gr does not
+# wait.
+#
+# As global lazy `keys` in lsp.lua they replaced Vim's own gd and gi in every
+# buffer with no language server, where all they did was say the method was
+# not supported. And gr waited out timeoutlen on every press, because Neovim
+# 0.11 maps gra, gri, grn, grr and grt globally and a plain gr was a prefix of
+# them. lsp.lua sets the four in an LspAttach autocmd now, gr with nowait. So
+# none of them may be back in its keys table, and the gr map has to carry
+# nowait = true on its own line; a trailing comment cannot supply it.
+# tests/test-nvim.sh reads the maps a running nvim ends up with, in a buffer
+# with a server and in one without.
+lsp_keys="$(sed -n '/^    keys = {/,/^    },/p' "$LSP" | grep -vE '^[[:space:]]*--')"
+lsp_keys_g="$(printf '%s\n' "$lsp_keys" | grep -E '^[[:space:]]*\{[[:space:]]*"g[dDir]"')"
+lsp_gr="$(grep -vE '^[[:space:]]*--' "$LSP" | sed 's/[[:space:]]--.*$//' |
+  grep -E '"gr",[[:space:]]*vim\.lsp\.buf\.references')"
+if [ -z "$lsp_keys" ]; then
+  bad "could not read the keys table out of $LSP — whether gd, gD, gi and gr are global cannot be said"
+elif [ -n "$lsp_keys_g" ]; then
+  bad "$LSP declares gd, gD, gi or gr in its global lazy keys, replacing Vim's own in every buffer with no server:"
+  printf '%s\n' "$lsp_keys_g" | sed 's/^[[:space:]]*/      /'
+elif [ -z "$lsp_gr" ]; then
+  bad "found no gr map to vim.lsp.buf.references in $LSP — gr has moved, and whether it waits cannot be said"
+elif ! grep -qE 'nowait[[:space:]]*=[[:space:]]*true' <<<"$lsp_gr"; then
+  bad "$LSP maps gr without nowait = true, so every press waits out timeoutlen for Neovim's gra, gri, grn, grr and grt"
+else
+  ok "gd, gD, gi and gr are set per buffer when a server attaches, and gr does not wait for Neovim's gr* maps"
 fi
 
 section "tmux config"
@@ -1419,6 +1478,12 @@ section "Fresh machine"
 # comments dropped, one package per word; the rustup install has to be a line
 # of code, not a comment.
 #
+# A tool bootstrap.sh builds with `go install <path>@<version>` counts too,
+# named by the last element of its path, as goimports is. Only when that line
+# is a command, not a comment or a message quoting it; only when go is on the
+# brew list to run it; and only when main() calls the function holding it
+# after brew_install_pkgs, which is what puts go there.
+#
 # conform's table is READ, by nvim, not grepped. A line-based read took the
 # quoted names off each `ft = {` line, and stylua keeps an entry written over
 # several lines as it is: `python = {`, `"black",`, `},`. The names on the inner
@@ -1448,6 +1513,23 @@ boot_pkgs="$(sed -n '/^brew_install_pkgs()/,/^}/p' bootstrap.sh |
   sed -e 's/#.*//' -e 's/local pkgs=(//' -e 's/)//' |
   tr -s '[:blank:]' '\n' | grep -v '^$')"
 boot_rustup="$(grep -vE '^[[:space:]]*#' bootstrap.sh | grep -cF 'sh.rustup.rs')"
+# The function each `go install` line is in, then the tool it builds.
+boot_go_lines="$(awk '
+  /^[a-z_]+\(\) \{/ { fn = $1; sub(/\(\)/, "", fn) }
+  /^[[:space:]]*go install [^[:space:]]+@/ {
+    path = $3; sub(/@.*/, "", path); n = split(path, part, "/"); print fn, part[n]
+  }
+' bootstrap.sh)"
+boot_main="$(sed -n '/^main() {/,/^}/p' bootstrap.sh | grep -vE '^[[:space:]]*#' | awk '{ print $1 }')"
+boot_go_tools=""
+while read -r fn tool; do
+  [ -n "$tool" ] || continue
+  grep -qxF go <<<"$boot_pkgs" || continue
+  printf '%s\n' "$boot_main" | awk -v a=brew_install_pkgs -v b="$fn" \
+    '$1 == a && !ia { ia = NR } $1 == b && !ib { ib = NR } END { exit !(ia && ib && ia < ib) }' || continue
+  boot_go_tools="$boot_go_tools$tool
+"
+done <<<"$boot_go_lines"
 conform_lua=nvim/.config/nvim/lua/rich/plugins/conform.lua
 fresh_servers="$(lsp_list '/vim\.lsp\.enable({/,/})/')"
 lint_tools=""
@@ -1501,7 +1583,10 @@ end' | nvim --clean --headless -l /dev/stdin "$conform_lua" 2>/dev/null)"
       case "$t" in
         gofmt) grep -qxF go <<<"$boot_pkgs" && continue ;;
         rustfmt) [ "${boot_rustup:-0}" -gt 0 ] && continue ;;
-        *) grep -qxF "$t" <<<"$boot_pkgs" && continue ;;
+        *)
+          grep -qxF "$t" <<<"$boot_pkgs" && continue
+          grep -qxF "$t" <<<"$boot_go_tools" && continue
+          ;;
       esac
       bad "the nvim config runs $t, and bootstrap.sh does not install it — on a fresh machine its filetypes are silently not formatted or linted"
       fresh_bad=$((fresh_bad + 1))
