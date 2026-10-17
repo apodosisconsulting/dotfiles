@@ -149,6 +149,25 @@ local function attach_all()
     end
 end
 
+-- Said once per session, and only when a parser is actually missing: without
+-- the CLI every install fails, one error per language, after downloading the
+-- source for each.
+local warned_cli = false
+local function have_cli(missing)
+    if vim.fn.executable("tree-sitter") == 1 then
+        return true
+    end
+    if not warned_cli then
+        warned_cli = true
+        loud(
+            "nvim-treesitter cannot build "
+                .. table.concat(missing, ", ")
+                .. ": no tree-sitter on PATH (brew install tree-sitter-cli)"
+        )
+    end
+    return false
+end
+
 return {
     {
         "nvim-treesitter/nvim-treesitter",
@@ -241,7 +260,9 @@ return {
                     if not info or not info.install_info or info.tier == 4 then
                         return
                     end
-                    ts.install(lang):await(vim.schedule_wrap(attach_all))
+                    if have_cli({ lang }) then
+                        ts.install(lang):await(vim.schedule_wrap(attach_all))
+                    end
                 end,
             })
 
@@ -252,7 +273,7 @@ return {
             local missing = vim.tbl_filter(function(p)
                 return not vim.list_contains(installed, p)
             end, parsers)
-            if #missing > 0 then
+            if #missing > 0 and have_cli(missing) then
                 ts.install(missing):await(vim.schedule_wrap(attach_all))
             end
 

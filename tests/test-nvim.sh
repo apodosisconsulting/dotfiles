@@ -836,6 +836,58 @@ assert "with no tree-sitter CLI the build fails, saying what to install" \
 refute "...before it asks for a parser it cannot build" contains "$out" "BUILD_CALLS=install"
 
 echo
+echo "== a missing tree-sitter CLI is said once, not left to fail per parser =="
+# main builds every parser with the tree-sitter CLI. Without it each install
+# downloads the parser's source and then fails, one error per language, and
+# auto-install does that again for every new filetype. treesitter.lua checks
+# for the CLI first and says what to install instead. So: a language nvim-
+# treesitter has a parser for and this machine does not, asked for in an nvim
+# whose PATH holds nvim, the system's tools and nothing from Homebrew. Two of
+# them, one after the other, because the second must not say it again.
+#
+# The probe reports the languages it picked and whether nvim found any
+# tree-sitter at all, so a pass cannot come from there being nothing to
+# install or from a CLI that was there after all. Nothing is downloaded: with no
+# CLI, treesitter.lua does not start an install. Proven by hand on copies of
+# the config: deleting the loud() call from have_cli() fails the first check,
+# never setting warned_cli fails the second, and making have_cli() answer yes
+# regardless fails the first and the last.
+cat >"$SANDBOX/ts_cli_probe.lua" <<'LUA'
+local parsers = require("nvim-treesitter.parsers")
+local installed = require("nvim-treesitter").get_installed()
+local langs = vim.tbl_keys(parsers)
+table.sort(langs)
+local picks = {}
+for _, lang in ipairs(langs) do
+  local p = parsers[lang]
+  if #picks < 2 and p.install_info and p.tier ~= 4 and not vim.list_contains(installed, lang)
+    and vim.treesitter.language.get_lang(lang) == lang and not vim.treesitter.language.add(lang) then
+    picks[#picks + 1] = lang
+  end
+end
+print("TS_CLI=[" .. vim.fn.exepath("tree-sitter") .. "] TS_PICKED=" .. (#picks == 2 and table.concat(picks, ",") or "none"))
+for _, lang in ipairs(#picks == 2 and picks or {}) do
+  vim.cmd.enew()
+  vim.bo.filetype = lang
+  vim.wait(500)
+end
+LUA
+out="$(PATH="$CLIP_BIN:$NO_TS_BIN:/usr/bin:/bin" XDG_STATE_HOME="$STATE" XDG_CACHE_HOME="$CACHE" \
+  nvim --headless "$SANDBOX/start.lua" -c 'lua vim.wait(1000)' -c "luafile $SANDBOX/ts_cli_probe.lua" -c 'qa!' 2>&1)"
+if ! contains "$out" "TS_CLI=[]"; then
+  printf '  \033[33mSKIP\033[0m  a tree-sitter CLI is on the system PATH, so its absence cannot be set up\n'
+elif contains "$out" "TS_PICKED=none"; then
+  no "found no language that nvim-treesitter knows and this machine has not installed (guards a vacuous pass)"
+  printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300)"
+else
+  printf '    %s\n' "$(printf '%s' "$out" | grep -o 'TS_PICKED=[^ ]*' | head -1)"
+  said="$(printf '%s\n' "$out" | grep -c 'no tree-sitter on PATH (brew install tree-sitter-cli)')"
+  assert "with no tree-sitter CLI, treesitter.lua says which to install" [ "${said:-0}" -ge 1 ]
+  assert "...once, not once per language" [ "${said:-0}" -le 1 ]
+  refute "...and does not start an install that can only fail" contains "$out" "Downloading"
+fi
+
+echo
 echo "== the leader mappings resolve to what the config claims =="
 # A lazy `keys` entry that never registers leaves a key that silently does
 # nothing — the plugin is configured, the binding is not there.
