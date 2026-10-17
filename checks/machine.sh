@@ -39,11 +39,30 @@ else
   meh "~/.local does not exist yet"
 fi
 
-pending="$(stow -n -t "$HOME" nvim wezterm tmux zsh home starship git 2>&1 | grep -cE '^(LINK|MKDIR)')"
-if [ "${pending:-0}" -eq 0 ]; then
-  ok "every package is stowed (no pending links)"
+# A simulated RESTOW, verbose, is what says. `stow -n` on its own prints only its
+# "simulation mode" warning, whatever is pending, so this used to count zero
+# every time: a file added to a package was never live until someone happened
+# to run make stow, and a file deleted from one left a dead link behind --
+# deleting lint.lua left ~/.config/nvim's link to it dangling, and lazy failed
+# to load "rich.plugins.lint" at every start while this said all was well.
+# Restow is what make stow runs. It plans to unlink every link and put each
+# back, marked "(reverts previous action)"; anything else is pending: a LINK
+# not marked so is a file not yet live, and an UNLINK never reverted is a dead
+# link. From a second checkout of this repo, a worktree say, the live links
+# belong to the first, and stow reports conflicts instead: nothing to judge.
+stow_plan="$(stow -n -v -R -t "$HOME" nvim wezterm tmux zsh home starship git 2>&1)"
+# shellcheck disable=SC2016  # $0 and $2 are awk's
+pending="$(printf '%s\n' "$stow_plan" | awk '
+  /^UNLINK: / { dead[$2] = 1; next }
+  /^LINK: / { if ($0 ~ /\(reverts previous action\)/) delete dead[$2]; else n++; next }
+  /^MKDIR: / { n++ }
+  END { for (k in dead) n++; print n + 0 }')"
+if grep -qF 'would cause conflicts' <<<"$stow_plan"; then
+  meh "stow reports conflicts from this checkout, so the live links belong to another one — whether every package is stowed is judged there"
+elif [ "${pending:-1}" -eq 0 ]; then
+  ok "every package is stowed (no pending links, no dead ones)"
 else
-  bad "$pending stow action(s) pending — run 'make stow' or new files will not be live"
+  bad "$pending stow action(s) pending, new files not yet live or dead links left behind — run 'make stow'"
 fi
 
 for s in tmux-resurrect-guard tmux-resurrect-saves tmux-clear-scrollback tmux-sessionizer tmux-kill-session; do
