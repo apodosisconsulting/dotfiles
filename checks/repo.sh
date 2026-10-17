@@ -577,7 +577,9 @@ fi
 # believes the terminal can do it (the extkeys terminal-feature). Drop either
 # and the binding still READS correct while becoming unreachable — the config
 # would claim a key that cannot be pressed. So any Shift-bearing restore key
-# requires both.
+# requires both. (Restore is M-r now, which needs neither: C-S-r, where it
+# was, is one WezTerm keeps for itself. Whether a key gets past WezTerm is a
+# question for the installed WezTerm, so checks/machine.sh asks it.)
 #
 # Both are read the way tmux applies them. extended-keys is the LAST line that
 # sets it, so a later `set -s extended-keys off` counts; extkeys comes from the
@@ -604,8 +606,10 @@ elif [ "$needs_ext" = yes ] && [ "$ext_on" -eq 0 ]; then
   bad "@resurrect-restore is '$restore_key', but extended-keys does not end up on (last value: '${ext_keys:-unset}') — without it that is the same byte as the plain-Ctrl key and the binding is unreachable"
 elif [ "$needs_ext" = yes ] && [ "$ext_feat" -eq 0 ]; then
   bad "@resurrect-restore is '$restore_key', but terminal-features does not end up declaring extkeys — tmux will not ask the terminal for the sequence that makes it distinct"
-else
+elif [ "$needs_ext" = yes ]; then
   ok "restore is bound to '$restore_key', off the held-Ctrl path, with the extended-keys support that makes it a key the terminal can send"
+else
+  ok "restore is bound to '$restore_key', off the held-Ctrl path, and needs no extended keys to be sent"
 fi
 
 # One clipboard, from tmux's side.
@@ -1043,27 +1047,79 @@ else
   ok ".zshrc pins the emacs keymap before compinit, whatever EDITOR a shell inherits"
 fi
 
-# Without interactive_comments, a command pasted from the README with its
-# trailing comment runs the comment as arguments. Read as zsh reads option
-# names -- any case, underscores ignored, "no" negates -- and the last setopt
-# or unsetopt that names it is the one that holds.
-comments="$(awk '
-  /^[[:space:]]*#/ { next }
-  $1 == "setopt" || $1 == "unsetopt" {
-    for (i = 2; i <= NF; i++) {
-      if ($i ~ /^#/) break
-      o = tolower($i); gsub(/_/, "", o)
-      on = ($1 == "setopt")
-      if (o ~ /^no/) { o = substr(o, 3); on = !on }
-      if (o == "interactivecomments") state = (on ? "on" : "off") ":" NR
+# The state the last setopt or unsetopt naming an option leaves it in, as
+# on:LINE or off:LINE, or nothing when no line names it. Read as zsh reads
+# option names: any case, underscores ignored, a "no" in front negates.
+zsh_opt_state() { # $1 = option name, lower case, no underscores
+  awk -v want="$1" '
+    /^[[:space:]]*#/ { next }
+    $1 == "setopt" || $1 == "unsetopt" {
+      for (i = 2; i <= NF; i++) {
+        if ($i ~ /^#/) break
+        o = tolower($i); gsub(/_/, "", o)
+        on = ($1 == "setopt")
+        if (o != want && o == "no" want) { o = want; on = !on }
+        if (o == want) state = (on ? "on" : "off") ":" NR
+      }
     }
-  }
-  END { print state }
-' zsh/.zshrc 2>/dev/null)"
+    END { print state }
+  ' zsh/.zshrc 2>/dev/null
+}
+
+# Without interactive_comments, a command pasted from the README with its
+# trailing comment runs the comment as arguments. The last setopt or unsetopt
+# that names it is the one that holds.
+comments="$(zsh_opt_state interactivecomments)"
 case "$comments" in
   on:*) ok ".zshrc sets interactive_comments, so a pasted command's trailing # comment stays a comment" ;;
   off:*) bad ".zshrc turns interactive_comments off again at line ${comments#*:} — a pasted # comment becomes arguments" ;;
   *) bad ".zshrc never sets interactive_comments — a pasted # comment becomes arguments" ;;
+esac
+
+# Dotfiles belong to completion, not to every glob. `setopt globdots` made each
+# * in every shell match them, so `rm -rf *` and `mv * ..` took .git and .env
+# along. compinit keeps its own option list, _comp_options, which completion
+# widgets set as local options and nothing else reads, so globdots goes there.
+# compinit assigns that list afresh, so the append has to come after the last
+# compinit call, and after any later plain assignment that would replace it.
+#
+# Nothing naming globdots reads as off, its default. The reader is the one the
+# interactive_comments check above uses, so a reader that has gone blind fails
+# there rather than passing here unnoticed.
+globdots="$(zsh_opt_state globdots)"
+case "$globdots" in
+  on:*) bad ".zshrc turns globdots on at line ${globdots#*:} — every * in every shell matches .git and .env" ;;
+  *) ok ".zshrc leaves globdots off, so a * on the command line does not match .git or .env" ;;
+esac
+comp_dots_at="$(grep -nE '^[[:space:]]*_comp_options\+=\([^)#]*globdots' zsh/.zshrc 2>/dev/null | tail -1 | cut -d: -f1)"
+comp_reset_at="$(grep -nE '^[[:space:]]*_comp_options=' zsh/.zshrc 2>/dev/null | tail -1 | cut -d: -f1)"
+compinit_last="$(grep -nE '^[[:space:]]*compinit([[:space:]]|$)' zsh/.zshrc 2>/dev/null | tail -1 | cut -d: -f1)"
+if [ -z "$compinit_last" ]; then
+  bad "could not find where .zshrc runs compinit — whether completion keeps globdots cannot be said"
+elif [ -z "$comp_dots_at" ]; then
+  bad ".zshrc never adds globdots to _comp_options — Tab stops offering dotfiles"
+elif [ "$comp_dots_at" -le "$compinit_last" ]; then
+  bad "_comp_options gains globdots at line $comp_dots_at, before compinit (line $compinit_last) sets the list afresh — Tab stops offering dotfiles"
+elif [ -n "$comp_reset_at" ] && [ "$comp_reset_at" -gt "$comp_dots_at" ]; then
+  bad "_comp_options is assigned again at line $comp_reset_at, after globdots was added — Tab stops offering dotfiles"
+else
+  ok "Tab still offers dotfiles: _comp_options gains globdots after compinit"
+fi
+
+# Tab matches either case, as the Mac's file system does, so `cd de<Tab>`
+# offers Desktop as well as dev. Every zstyle naming matcher-list is read and
+# the last one judged, so a later one that empties or deletes the list counts.
+matcher="$(grep -E '^[[:space:]]*zstyle[[:space:]].*[[:space:]]matcher-list([[:space:]]|$)' zsh/.zshrc 2>/dev/null | tail -1)"
+case "$matcher" in
+  '')
+    bad ".zshrc sets no completion matcher-list — Tab matches case exactly, so cd de<Tab> misses Desktop"
+    ;;
+  *"zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'"*)
+    ok "Tab matches either case: the last matcher-list is m:{a-zA-Z}={A-Za-z}"
+    ;;
+  *)
+    bad ".zshrc's last matcher-list line is not the case-insensitive one: $matcher"
+    ;;
 esac
 
 # starship's init sets RPROMPT to a `starship prompt --right` run before every
@@ -1454,6 +1510,19 @@ end' | nvim --clean --headless -l /dev/stdin "$conform_lua" 2>/dev/null)"
   [ "$fresh_bad" -eq 0 ] && ok "bootstrap.sh installs all $tools_seen formatters and linters the nvim config runs"
 else
   meh "nvim not installed, cannot read the formatters and linters the nvim config runs"
+fi
+
+# tpm installs nothing until prefix I is pressed, so on a fresh machine the
+# tmux plugins exist only if bootstrap clones them. tests/test-bootstrap.sh
+# runs install_tmux_plugins; this is what says main() runs it at all. Read
+# from main's body, comment lines dropped.
+boot_main="$(sed -n '/^main()/,/^}/p' bootstrap.sh | grep -vE '^[[:space:]]*#')"
+if [ -z "$boot_main" ]; then
+  bad "could not read bootstrap.sh's main() — whether it installs the tmux plugins cannot be said"
+elif grep -qE '^[[:space:]]*install_tmux_plugins([[:space:]]|$)' <<<"$boot_main"; then
+  ok "bootstrap.sh's main() installs the tmux plugins, so a fresh machine has them before prefix I"
+else
+  bad "bootstrap.sh's main() never runs install_tmux_plugins — a fresh machine has no resurrect or continuum until prefix I"
 fi
 
 section "Git hooks"
@@ -1912,5 +1981,21 @@ else
     bad "CI never runs 'Lazy! restore', so nothing holds the plugins it tests to lazy-lock.json"
   else
     ok "CI primes the plugins with 'Lazy! restore', at the commits lazy-lock.json pins"
+  fi
+  # The tmux plugins CI tests with have to be the ones tmux.conf declares. CI
+  # cloned three by hand and left out vim-tmux-navigator, the fourth. It now
+  # runs bootstrap's install_tmux_plugins, which reads tmux.conf's @plugin
+  # lines, so a git clone of its own anywhere in the workflow is a second list
+  # beside that one. Comment lines are dropped, so the comment explaining this
+  # cannot satisfy it.
+  ci_code="$(grep -vE '^[[:space:]]*#' "$CI")"
+  if ! grep -qE '(^|[^[:alnum:]_])install_tmux_plugins([^[:alnum:]_]|$)' <<<"$ci_code"; then
+    bad "CI never runs bootstrap's install_tmux_plugins — the tmux plugins it tests with are not the list tmux.conf declares"
+  elif ! grep -qE '^install_tmux_plugins\(\)' bootstrap.sh; then
+    bad "CI runs install_tmux_plugins, which bootstrap.sh does not define — the step fails, or installs nothing"
+  elif grep -qE 'git[[:space:]]+clone' <<<"$ci_code"; then
+    bad "CI clones something itself — a list of its own beside the @plugin lines install_tmux_plugins reads"
+  else
+    ok "CI installs the tmux plugins with bootstrap's install_tmux_plugins, from tmux.conf's own @plugin lines"
   fi
 fi

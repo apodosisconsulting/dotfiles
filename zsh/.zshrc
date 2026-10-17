@@ -65,9 +65,32 @@ nvm() {
   [[ -s "$NVM_DIR/nvm.sh" ]] && . "$NVM_DIR/nvm.sh"
   nvm "$@"
 }
-node() { nvm use --silent >/dev/null 2>&1; unset -f node; command node "$@"; }
-npm()  { nvm use --silent >/dev/null 2>&1; unset -f npm;  command npm  "$@"; }
-npx()  { nvm use --silent >/dev/null 2>&1; unset -f npx;  command npx  "$@"; }
+# nvm's default node first on PATH from the start, found from its alias file
+# and a glob rather than by loading nvm.sh. Before, a shell ran Homebrew's node
+# until the first node, npm or npx typed in it, and nvm's after, so anything
+# that reaches node through PATH -- a global npm CLI, a language server nvim
+# starts -- got whichever was current. (n) sorts the matches numerically, so a
+# default of 20 picks v20.10.0 over v20.9.0; plain sorting picks v20.9.0.
+#
+# What that gives up: the wrappers ran a bare `nvm use`, which also applied a
+# .nvmrc in the directory of the first node typed. Now `nvm use` there does.
+#
+# A default that is not a version (lts/*, node, another alias) names no
+# directory, so it keeps the wrappers: they load nvm.sh, which resolves it, on
+# the first node, npm or npx.
+() {
+  local v=""
+  local -a d
+  [[ -r $NVM_DIR/alias/default ]] && read -r v <$NVM_DIR/alias/default
+  [[ -n $v ]] && d=($NVM_DIR/versions/node/v${v#v}(|.*)(Nn/))
+  if (( $#d )); then
+    path=($d[-1]/bin $path)
+  else
+    node() { nvm use --silent >/dev/null 2>&1; unset -f node; command node "$@"; }
+    npm()  { nvm use --silent >/dev/null 2>&1; unset -f npm;  command npm  "$@"; }
+    npx()  { nvm use --silent >/dev/null 2>&1; unset -f npx;  command npx  "$@"; }
+  fi
+}
 
 # -------------------------
 # Line editing: emacs keys, whatever $EDITOR says
@@ -112,7 +135,17 @@ autoload -Uz compinit
   fi
 }
 
-setopt globdots
+# Tab offers dotfiles; a * on the command line does not match them. globdots
+# goes on compinit's own option list, which every completion widget sets as
+# local options on entry and nothing else reads. `setopt globdots` here made
+# every glob in every shell match dotfiles, so `rm -rf *` and `mv * ..` took
+# .git and .env with them. After compinit, which sets the list afresh.
+_comp_options+=(globdots)
+
+# Tab matches either case, so `cd de<Tab>` offers Desktop as well as dev. The
+# Mac's file system already ignores case (`ls desktop` lists Desktop), so a
+# prefix in the wrong case named the file everywhere except completion.
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
 
 # -------------------------
 # Environment

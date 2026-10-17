@@ -239,24 +239,61 @@ mutate "a later reset that discards the declared features is caught" "declares s
 
 # The defect this exists for: restore back on the key a held Ctrl reaches.
 mutate "restore left on resurrect's C-r default is caught" "restore is bound to" \
-  sed -i '' "s/^set -g @resurrect-restore 'C-S-r'$/set -g @resurrect-restore 'C-r'/" tmux/.config/tmux/tmux.conf
+  sed -i '' "s/^set -g @resurrect-restore 'M-r'$/set -g @resurrect-restore 'C-r'/" tmux/.config/tmux/tmux.conf
+
+# Restore is M-r, which needs no extended keys, so each of these first puts it
+# back on C-S-r, the Shift-bearing key it was on: the requirement they break is
+# one only that kind of key has.
+restore_on_c_s_r() {
+  sed -i '' "s/^set -g @resurrect-restore 'M-r'$/set -g @resurrect-restore 'C-S-r'/" tmux/.config/tmux/tmux.conf
+}
+c_s_r_without_extended_keys() {
+  restore_on_c_s_r && sed -i '' '/^set -s extended-keys on$/d' tmux/.config/tmux/tmux.conf
+}
+c_s_r_without_extkeys() {
+  restore_on_c_s_r && sed -i '' 's/:RGB:usstyle:extkeys/:RGB:usstyle/' tmux/.config/tmux/tmux.conf
+}
+c_s_r_with_extkeys_reset() { restore_on_c_s_r && split_terminal_features; }
+c_s_r_with_extended_keys_off_later() {
+  restore_on_c_s_r && printf '\nset -s extended-keys off\n' >>tmux/.config/tmux/tmux.conf
+}
 
 # Reads correct, cannot be pressed: C-S-r without extended-keys is just C-r.
 mutate "a Shift-bearing restore key without extended-keys is caught" "restore is bound to" \
-  sed -i '' '/^set -s extended-keys on$/d' tmux/.config/tmux/tmux.conf
+  c_s_r_without_extended_keys
 
 mutate "a Shift-bearing restore key without the extkeys feature is caught" "restore is bound to" \
-  sed -i '' 's/:RGB:usstyle:extkeys/:RGB:usstyle/' tmux/.config/tmux/tmux.conf
+  c_s_r_without_extkeys
 
 mutate "extkeys declared and then reset away is caught" "restore is bound to" \
-  split_terminal_features
+  c_s_r_with_extkeys_reset
 
 # Last write wins: a later extended-keys off is the value tmux applies.
 mutate "a later extended-keys off is caught" "restore is bound to" \
-  bash -c "printf '\nset -s extended-keys off\n' >> tmux/.config/tmux/tmux.conf"
+  c_s_r_with_extended_keys_off_later
 
 mutate "no @resurrect-restore at all fails rather than passing vacuously" "restore is bound to" \
   sed -i '' '/^set -g @resurrect-restore/d' tmux/.config/tmux/tmux.conf
+
+# The defect the move to M-r fixed: restore on C-S-r, which WezTerm's own key
+# table maps to ReloadConfiguration, so the key never reached tmux.
+mutate_machine "restore back on a key WezTerm keeps for itself is caught" "so it reaches tmux" \
+  restore_on_c_s_r
+
+# The table read is the one with wezterm.lua loaded, so a key it assigns
+# counts as much as one of WezTerm's defaults.
+mutate_machine "a wezterm.lua key on the restore key is caught" "so it reaches tmux" \
+  python3 -c 'p = "wezterm/.config/wezterm/wezterm.lua"; s = open(p).read()
+k = "    keys = {\n"
+open(p, "w").write(s.replace(k, k + "        { key = \"r\", mods = \"OPT\", action = wezterm.action.ReloadConfiguration },\n", 1))'
+
+mutate_machine "a restore key machine.sh cannot read fails rather than passing vacuously" "so it reaches tmux" \
+  sed -i '' "s/^set -g @resurrect-restore 'M-r'$/set -g @resurrect-restore \"M-r\"/" tmux/.config/tmux/tmux.conf
+
+# A reader gone blind to WezTerm's table, which is what a change to show-keys'
+# headings would do, reads no rows and has to fail rather than find no key.
+mutate_machine "no rows read out of WezTerm's key table fails rather than passing vacuously" "so it reaches tmux" \
+  sed -i '' 's|/^Default key table/|/^No such heading/|' checks/machine.sh
 
 # The defect this exists for: Enter and a mouse drag copying into tmux's own
 # buffer, which is a second clipboard.
@@ -525,6 +562,44 @@ mutate "interactive_comments unset again later is caught" "sets interactive_comm
 mutate "interactive_comments negated again later is caught" "sets interactive_comments" \
   bash -c 'printf "\nsetopt autocd no_interactivecomments\n" >> zsh/.zshrc'
 
+# The defect this exists for, replayed: setopt globdots back where the
+# _comp_options line is, so every * matches .git and .env again.
+mutate "setopt globdots back in .zshrc is caught" "leaves globdots off" \
+  sed -i '' 's/^_comp_options+=(globdots)$/setopt globdots/' zsh/.zshrc
+
+# In a spelling zsh also accepts, and by turning its negation off.
+mutate "globdots set as GLOB_DOTS among other options is caught" "leaves globdots off" \
+  bash -c 'printf "\nsetopt autocd GLOB_DOTS\n" >> zsh/.zshrc'
+
+mutate "globdots set by unsetting no_globdots is caught" "leaves globdots off" \
+  bash -c 'printf "\nunsetopt no_globdots\n" >> zsh/.zshrc'
+
+mutate "no globdots in _comp_options, so Tab hides dotfiles, is caught" "Tab still offers dotfiles" \
+  sed -i '' '/^_comp_options+=(globdots)$/d' zsh/.zshrc
+
+# Before compinit, which assigns the list afresh and throws the append away.
+mutate "globdots added to _comp_options before compinit is caught" "Tab still offers dotfiles" \
+  python3 -c 'p = "zsh/.zshrc"; s = open(p).read().split("\n")
+s.remove("_comp_options+=(globdots)"); s.insert(2, "_comp_options+=(globdots)"); open(p, "w").write("\n".join(s))'
+
+# Last write wins: a later plain assignment replaces the list with the append.
+mutate "_comp_options assigned again after the append is caught" "Tab still offers dotfiles" \
+  bash -c 'printf "\n_comp_options=(extendedglob)\n" >> zsh/.zshrc'
+
+mutate "no findable compinit fails the _comp_options order rather than passing vacuously" "Tab still offers dotfiles" \
+  sed -i '' 's/^\([[:space:]]*\)compinit/\1: compinit/' zsh/.zshrc
+
+# The defect this exists for: no matcher-list, so cd de<Tab> misses Desktop.
+mutate "no case-insensitive matcher-list is caught" "Tab matches either case" \
+  sed -i '' "/^zstyle ':completion:\*' matcher-list /d" zsh/.zshrc
+
+# Last write wins: a later zstyle that empties the list or deletes it.
+mutate "a later empty matcher-list is caught" "Tab matches either case" \
+  bash -c "printf '\nzstyle %s matcher-list %s\n' \"':completion:*'\" \"''\" >> zsh/.zshrc"
+
+mutate "a later zstyle -d of the matcher-list is caught" "Tab matches either case" \
+  bash -c "printf '\nzstyle -d %s matcher-list\n' \"':completion:*'\" >> zsh/.zshrc"
+
 # The defect this exists for: a starship forked before every prompt to draw an
 # empty right prompt.
 mutate "starship's RPROMPT left in place is caught" "clears RPROMPT after starship init" \
@@ -672,6 +747,24 @@ mutate "an update after the restore is caught" "at the commits lazy-lock.json pi
 mutate "CI never running restore at all is caught" "at the commits lazy-lock.json pins" \
   sed -i '' 's/"+Lazy! restore" +qa/+qa/' .github/workflows/ci.yml
 
+# The defect this exists for, replayed: CI cloning plugins by a list of its
+# own, which left vim-tmux-navigator out.
+# shellcheck disable=SC2016  # the $( ) and $HOME are text in ci.yml
+mutate "CI hand-cloning the tmux plugins again is caught" "CI installs the tmux plugins with" \
+  python3 -c 'p = ".github/workflows/ci.yml"; s = open(p).read()
+old = "plugins_log=\"$(bash -c '"'"'. ./bootstrap.sh && install_tmux_plugins'"'"' 2>&1)\""
+assert old in s
+open(p, "w").write(s.replace(old, "git clone --depth 1 https://github.com/tmux-plugins/tpm \"$HOME/.config/tmux/plugins/tpm\"", 1))'
+
+# A second list beside the function's is still a second list.
+# shellcheck disable=SC2016  # $HOME is text written into ci.yml
+mutate "a hand clone beside install_tmux_plugins is caught" "CI installs the tmux plugins with" \
+  sed -i '' 's|^          make stow$|          make stow\
+          git clone --depth 1 https://github.com/christoomey/vim-tmux-navigator "$HOME/x"|' .github/workflows/ci.yml
+
+mutate "CI calling an install_tmux_plugins bootstrap.sh does not define is caught" "CI installs the tmux plugins with" \
+  sed -i '' 's/^install_tmux_plugins() {$/install_plugins_for_tmux() {/' bootstrap.sh
+
 # ------------------------------------- assertions that could pass while being wrong
 
 # The old version of this compared COUNTS: renaming a binding kept the total at
@@ -739,6 +832,14 @@ mutate "the entries after a multi-line one are read too" "formatters and linters
 # A filetype that yields no name is reported, not counted as nothing to install.
 mutate "a filetype whose formatters are not a list of names is caught" "formatters and linters the nvim config runs" \
   sed -i '' 's/lua = { "stylua" },/lua = function() return { "stylua" } end,/' nvim/.config/nvim/lua/rich/plugins/conform.lua
+
+# The defect this exists for: a fresh machine with no tmux plugins until
+# someone knows to press prefix I.
+mutate "bootstrap's main() not installing the tmux plugins is caught" "installs the tmux plugins, so a fresh machine" \
+  sed -i '' '/^  install_tmux_plugins$/d' bootstrap.sh
+
+mutate "the call left only as a comment in main() is caught" "installs the tmux plugins, so a fresh machine" \
+  sed -i '' 's/^  install_tmux_plugins$/  # install_tmux_plugins/' bootstrap.sh
 
 # ------------------------------------------- constants written down more than once
 

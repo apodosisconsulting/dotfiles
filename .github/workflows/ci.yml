@@ -49,14 +49,19 @@ jobs:
       # No count of those bindings here on purpose: it was "five", and a sixth
       # skip-guarded binding would have made it quietly wrong the way every
       # other number written into a comment in this repo went wrong.
+      #
+      # The plugins come from bootstrap.sh's install_tmux_plugins, which clones
+      # every @plugin line in tmux.conf, so CI gets what a fresh machine gets.
+      # The three clones written out here left vim-tmux-navigator out. A clone
+      # that fails only warns in bootstrap, where prefix I can finish the job;
+      # here the warning fails the step, or the suites needing that plugin
+      # would skip and the run would stay green.
       - name: Install the dotfiles so the suites can exercise them
         run: |
           make stow
-          PLUGINS="$HOME/.config/tmux/plugins"
-          mkdir -p "$PLUGINS"
-          git clone --depth 1 https://github.com/tmux-plugins/tpm "$PLUGINS/tpm"
-          git clone --depth 1 https://github.com/tmux-plugins/tmux-resurrect "$PLUGINS/tmux-resurrect"
-          git clone --depth 1 https://github.com/tmux-plugins/tmux-continuum "$PLUGINS/tmux-continuum"
+          plugins_log="$(bash -c '. ./bootstrap.sh && install_tmux_plugins' 2>&1)"
+          printf '%s\n' "$plugins_log"
+          case "$plugins_log" in *WARN:*) exit 1 ;; esac
 
       # The first nvim run installs the whole plugin set through lazy — no count
       # here, because a number in a comment is a number nothing re-counts. Done as

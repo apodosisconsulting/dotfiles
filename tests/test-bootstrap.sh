@@ -110,6 +110,38 @@ assert "it says so" contains "$out" "already installed"
 refute "and does not fetch the installer" called "curl"
 
 echo
+echo "== a fresh Homebrew install writes nothing to ~/.zprofile =="
+# It appended `eval "$(brew shellenv)"` there, which ran brew again in every
+# login shell, and every tmux pane is one; .zshrc already sets the same
+# environment for interactive shells. The installer is the curl stub, which
+# prints nothing for bash to run. What it would have installed is looked for at
+# the two fixed prefixes, so a machine with neither cannot get past them.
+brew_at=""
+for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+  if [ -x "$b" ]; then
+    brew_at="$b"
+    break
+  fi
+done
+if [ -z "$brew_at" ]; then
+  printf '  \033[33mSKIP\033[0m  %s\n' "no brew at either prefix, so install_homebrew_macos stops before the step this tests"
+else
+  reset_stubs
+  rm -f "$STUB/brew" # absent from PATH, so the install branch runs
+  out="$(
+    PATH="$STUB:/usr/bin:/bin" HOME="$FAKE_HOME" bash -c "
+      source '$BOOT'
+      install_homebrew_macos
+      echo \"PREFIX=\${HOMEBREW_PREFIX:-unset}\"
+    " 2>&1
+  )"
+  assert "with no brew on PATH it fetches the installer (guards a vacuous test)" called "curl"
+  assert "...and the rest of the run has Homebrew's environment" \
+    contains "$out" "PREFIX=${brew_at%/bin/brew}"
+  refute "...and nothing was written to ~/.zprofile" [ -e "$FAKE_HOME/.zprofile" ]
+fi
+
+echo
 echo "== packages: a failing cask warns rather than aborting =="
 # The distinction matters on a fresh machine: a cask that fails should not
 # prevent the dotfiles from being stowed, or you are left with nothing.
@@ -173,6 +205,75 @@ out="$(
 )"
 assert "it warns" contains "$out" "WARN"
 assert "and carries on" contains "$out" "REACHED_END"
+
+echo
+echo "== tmux plugins: one clone per @plugin line in tmux.conf, and none twice =="
+# tpm installs nothing until prefix I is pressed, so bootstrap clones the
+# plugins itself, from tmux.conf's own @plugin lines. git is a stub here: a
+# clone is recorded and makes the directory it names, as a real one would, and
+# anything else goes to the real git. The count is taken from the real file
+# with a reader of its own, which also sees an @plugin line in double quotes.
+TMUXCONF="$REPO_ROOT/tmux/.config/tmux/tmux.conf"
+PLUGINS="$FAKE_HOME/.config/tmux/plugins"
+clone_stub() { # $1 = the status a clone exits with
+  cat >"$STUB/git" <<STUBEOF
+#!/usr/bin/env bash
+if [ "\$1" = clone ]; then
+  printf 'git %s\n' "\$*" >>"$LOG"
+  [ "$1" -eq 0 ] || exit "$1"
+  for a in "\$@"; do dest="\$a"; done
+  mkdir -p "\$dest"
+  exit 0
+fi
+exec /usr/bin/git "\$@"
+STUBEOF
+  chmod +x "$STUB/git"
+}
+clones() { grep -c '^git clone ' "$LOG" 2>/dev/null || true; }
+plugin_run() { # $1 = a DOTFILES_DIR to read tmux.conf from, else the repo's
+  PATH="$STUB:$PATH" HOME="$FAKE_HOME" bash -c "
+    source '$BOOT'
+    DOTFILES_DIR='${1:-$REPO_ROOT}'
+    install_tmux_plugins
+    echo REACHED_END
+  " 2>&1
+}
+want="$(grep -cE '^[[:space:]]*set(-option)?[[:space:]]+-g[[:space:]]+@plugin[[:space:]]' "$TMUXCONF")"
+assert "tmux.conf declares plugins to count (guards a vacuous test)" [ "${want:-0}" -gt 0 ]
+
+reset_stubs
+clone_stub 0
+out="$(plugin_run)"
+assert "one clone per @plugin line in tmux.conf ($want)" [ "$(clones)" -eq "${want:-0}" ]
+assert "...each from GitHub, resurrect among them" \
+  called "clone -q --depth 1 https://github.com/tmux-plugins/tmux-resurrect"
+got_dirs="$(find "$PLUGINS" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+assert "...each into its own directory under ~/.config/tmux/plugins" [ "${got_dirs:-0}" -eq "${want:-0}" ]
+assert "...named as tpm names it, so tmux.conf's save.sh path is there" \
+  [ -d "$PLUGINS/tmux-resurrect" ]
+: >"$LOG"
+plugin_run >/dev/null
+assert "a second run clones nothing" [ "$(clones)" -eq 0 ]
+
+# Read from the file, not from a list of its own: one more line, one more clone.
+EXTRA="$TEST_TMP/extra-plugin"
+mkdir -p "$EXTRA/tmux/.config/tmux"
+{
+  cat "$TMUXCONF"
+  printf "set -g @plugin 'example/tmux-extra'\n"
+} >"$EXTRA/tmux/.config/tmux/tmux.conf"
+reset_stubs
+clone_stub 0
+plugin_run "$EXTRA" >/dev/null
+assert "a tmux.conf with one more @plugin line gets one more clone" \
+  [ "$(clones)" -eq "$((want + 1))" ]
+
+reset_stubs
+clone_stub 128
+out="$(plugin_run)"
+assert "a failed clone warns" contains "$out" "WARN"
+assert "...still tries every plugin rather than stopping at the first" [ "$(clones)" -eq "${want:-0}" ]
+assert "...and returns 0, so bootstrap's set -e carries on" contains "$out" "REACHED_END"
 
 echo
 echo "== hooks are installed LOCALLY, never globally =="
