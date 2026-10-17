@@ -24,8 +24,14 @@ jobs:
       # the full bootstrap: installing WezTerm, fonts and language servers to
       # assert things about this laptop would be slow and would still prove
       # nothing about a CI runner.
+      #
+      # tree-sitter-cli because Homebrew's neovim is 0.12, which is what
+      # nvim-treesitter's main branch needs, and main builds every parser with
+      # it. Without it the build run by "Prime the Neovim plugins" fails, no
+      # parser is installed, and the nvim suite skips its indent check for want
+      # of the queries that come with them.
       - name: Install dependencies
-        run: brew install stow shellcheck shfmt neovim tmux stylua prettier
+        run: brew install stow shellcheck shfmt neovim tree-sitter-cli tmux stylua prettier
 
       # `make lint` derives its file set from the shebangs rather than listing
       # paths. The list that used to be here omitted tmux/.local/bin, so none of
@@ -73,6 +79,10 @@ jobs:
       # never pinned while a fresh machine got the pinned ones. Startup installs a
       # missing plugin at its locked commit, and restore puts any plugin already
       # present back on it. checks/repo.sh fails on a sync or update here.
+      #
+      # The treesitter parsers are built here too, by nvim-treesitter's build
+      # in treesitter.lua: lazy runs it as part of installing the plugin, and
+      # it waits for every parser, because +qa would otherwise end the builds.
       - name: Prime the Neovim plugins
         run: nvim --headless "+Lazy! restore" +qa || echo "lazy restore failed; the nvim suite will report what it could not do"
 

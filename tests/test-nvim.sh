@@ -9,7 +9,10 @@
 # XDG_STATE_HOME is redirected so shada, undo history and lsp.log land in a
 # scratch dir rather than the real one. XDG_DATA_HOME is NOT redirected: the
 # plugins are already installed there, and pointing it elsewhere would make lazy
-# clone every one of them over the network on every run.
+# clone every one of them over the network on every run. It is honoured when
+# the caller sets it, the way nvim honours it, which is how this suite runs a
+# second Neovim against a plugin set and parsers of its own; NVIM_DATA below is
+# where nvim will look, for the skips that ask whether Mason installed a server.
 #
 # XDG_CACHE_HOME is redirected too. vim.loader, which lazy turns on, compiles
 # each lua file it loads into the cache's luac dir, under a name made from the
@@ -43,6 +46,7 @@ command -v nvim >/dev/null 2>&1 || skip_suite "nvim is not installed"
 # checkout's config while every other check tested the worktree's.
 NVIM_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
 [ -f "$NVIM_CONFIG/init.lua" ] || skip_suite "no nvim config at $NVIM_CONFIG"
+NVIM_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/nvim"
 
 STATE="$TEST_TMP/state"
 CACHE="$TEST_TMP/cache"
@@ -347,7 +351,7 @@ echo
 echo "== an LSP client actually attaches to a real file =="
 # vim.wait with a predicate polls rather than sleeping a guess, so this either
 # attaches inside the budget or reports honestly that it did not.
-if [ -x "$HOME/.local/share/nvim/mason/bin/lua-language-server" ]; then
+if [ -x "$NVIM_DATA/mason/bin/lua-language-server" ]; then
   out="$(nv "$SANDBOX/start.lua" \
     'lua vim.wait(20000, function() return #vim.lsp.get_clients({ bufnr = 0 }) > 0 end, 250)' \
     'lua local c = vim.lsp.get_clients({ bufnr = 0 }); print("FT=" .. vim.bo.filetype .. " CLIENTS=" .. #c .. " NAME=" .. (c[1] and c[1].name or "none"))')"
@@ -505,7 +509,7 @@ echo "== pyright resolves what a folder of loose scripts imports =="
 # Not nv(): the probe opens its own files and quits nvim itself. TMPDIR puts its
 # folders under this suite's scratch dir, and the cd it does keeps anything a
 # plugin writes into the cwd on exit in there too.
-if [ -x "$HOME/.local/share/nvim/mason/bin/pyright-langserver" ]; then
+if [ -x "$NVIM_DATA/mason/bin/pyright-langserver" ]; then
   out="$(TMPDIR="$TEST_TMP" PATH="$CLIP_BIN:$PATH" XDG_STATE_HOME="$STATE" XDG_CACHE_HOME="$CACHE" \
     nvim --headless -c "luafile $REPO_ROOT/tests/helpers/pyright-probe.lua" 2>&1)"
   # Only an explicit =false is a skip. A probe that died before printing it is
@@ -687,7 +691,7 @@ format_check() { # $1 = extension, $2 = ugly content, $3 = expected formatter, $
   # This guard was lost when the assertion was rewritten to ask conform, and CI
   # duly reported two missing binaries as config failures.
   if ! command -v "$want" >/dev/null 2>&1 &&
-    [ ! -x "$HOME/.local/share/nvim/mason/bin/$want" ]; then
+    [ ! -x "$NVIM_DATA/mason/bin/$want" ]; then
     printf '  \033[33mSKIP\033[0m  %s: %s is not installed on this machine\n' "$ext" "$want"
     return 0
   fi
@@ -746,33 +750,240 @@ format_check scss '.a{.b{color:red}}
 
 echo
 echo "== treesitter is set up, not just highlighting =="
-# treesitter.lua returns early when nvim-treesitter.configs cannot be required,
-# and until it said so that failure made no sound. Highlighting is the WRONG
-# thing to check, and was measured to be: with setup skipped, a lua buffer
-# still has an active highlighter, because Neovim's own lua ftplugin starts
-# one. What only setup provides is the textobject maps and the indentexpr, so
-# those are what is asserted.
+# treesitter.lua returns early, and says why, when Neovim is older than 0.12 or
+# nvim-treesitter cannot be required, and until it said so that failure made no
+# sound. Highlighting a lua buffer is the WRONG thing to check, and was
+# measured to be: with setup skipped, a lua buffer still has an active
+# highlighter, because Neovim's own lua ftplugin starts one. What only setup
+# provides is the textobject maps and the indentexpr, so those are what is
+# asserted, every map by mode and desc, and three of them by pressing them.
 #
-# Lua is the fixture because Neovim ships its parser, so this does not depend
-# on a parser download. CI installs a newer Neovim than the pinned master
-# branch supports; if this goes red there, that is what a fresh machine gets,
-# and it is not a reason to loosen it.
+# Lua is the fixture because Neovim ships its parser, so the maps do not depend
+# on a parser download. The indentexpr does: nvim-treesitter's main branch has
+# it set only where there is an indents query, and it installs that query with
+# the parser, which takes the tree-sitter CLI. So with no CLI and no query that
+# one is a skip; with the CLI it is asserted, because the parsers should then
+# be there.
 #
-# Proven by hand: misspelling the configs module in a copy of the config fails
-# both of the last two, and nvim then prints the error treesitter.lua reports.
-out="$(nv "$SANDBOX/start.lua" \
-  'lua vim.wait(2000, function() return not vim.tbl_isempty(vim.fn.maparg("af", "x", false, true)) end, 50)' \
-  'lua print("TS_FT=" .. vim.bo.filetype .. " TS_AF=" .. (vim.tbl_isempty(vim.fn.maparg("af", "x", false, true)) and "MISSING" or "mapped") .. " TS_INDENT=" .. vim.bo.indentexpr)')"
-assert "the fixture is a lua buffer, which the two below assume" contains "$out" "TS_FT=lua"
-assert "af selects a function: nvim-treesitter's textobjects were set up" \
-  contains "$out" "TS_AF=mapped"
-assert "indent comes from treesitter, not the filetype's own indentexpr" \
-  contains "$out" "TS_INDENT=nvim_treesitter#indent()"
+# Then a C file, for highlighting. On main nothing starts it except this config
+# -- Neovim's own ftplugins do for lua, markdown, help and query only -- and
+# without it a C file gets regex syntax and looks about right. Neovim ships the
+# C parser and its highlights query too. And a text file, where no map may be
+# set: ]] has to stay Vim's own section motion where there is no parser.
+#
+# Proven by hand: misspelling the nvim-treesitter module in a copy of the
+# config fails every assertion here about what treesitter sets up -- the maps,
+# the three keys, the indent and the C highlighting -- and nvim then prints the
+# error treesitter.lua reports.
+cat >"$SANDBOX/ts_probe.lua" <<'LUA'
+local dir = vim.env.TS_DIR
+local out = {}
+local function maps(lhs)
+  local modes, desc = "", nil
+  for _, mode in ipairs({ "n", "x", "o" }) do
+    local m = vim.fn.maparg(vim.keycode(lhs), mode, false, true)
+    if not vim.tbl_isempty(m) and m.buffer == 1 then
+      modes = modes .. mode
+      desc = desc or m.desc
+    end
+  end
+  return lhs .. "/" .. modes .. "=" .. (desc or "none"):gsub(" ", "_")
+end
+vim.cmd.edit(vim.fn.fnameescape(dir .. "/ts.lua"))
+vim.wait(2000, function()
+  return not maps("af"):find("=none$")
+end, 50)
+out[#out + 1] = "TS_FT=" .. vim.bo.filetype
+out[#out + 1] = "TS_INDENT=" .. vim.bo.indentexpr
+out[#out + 1] = "TS_LUA_INDENTS=" .. #vim.treesitter.query.get_files("lua", "indents")
+local all = {}
+for _, lhs in ipairs({ "af", "if", "ac", "ic", "aa", "ia", "]m", "]]", "]M", "][", "[m", "[[", "[M", "[]",
+  "<leader>a", "<leader>A" }) do
+  all[#all + 1] = maps(lhs)
+end
+out[#out + 1] = "TS_MAPS=" .. table.concat(all, ",")
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+vim.api.nvim_feedkeys("]m", "x", false)
+out[#out + 1] = "TS_MOVE=" .. vim.api.nvim_win_get_cursor(0)[1]
+local two = vim.api.nvim_buf_get_lines(0, 4, 5, false)[1] or ""
+vim.api.nvim_win_set_cursor(0, { 5, (two:find("(a", 1, true) or 1) })
+vim.api.nvim_feedkeys(vim.keycode("<leader>a"), "x", false)
+out[#out + 1] = "TS_SWAP=[" .. (vim.api.nvim_buf_get_lines(0, 4, 5, false)[1] or "") .. "]"
+vim.api.nvim_win_set_cursor(0, { 6, 4 })
+vim.api.nvim_feedkeys('"_dif', "x", false)
+local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "|")
+out[#out + 1] = "TS_DIF_GONE=" .. tostring(not text:find("a + b", 1, true))
+out[#out + 1] = "TS_DIF_KEPT=" .. tostring(text:find("return 1", 1, true) ~= nil and text:find("function two", 1, true) ~= nil)
+vim.cmd.edit(vim.fn.fnameescape(dir .. "/ts.c"))
+vim.wait(1000, function()
+  return vim.treesitter.highlighter.active[vim.api.nvim_get_current_buf()] ~= nil
+end, 50)
+out[#out + 1] = "TS_C_FT=" .. vim.bo.filetype
+out[#out + 1] = "TS_C_HL=" .. tostring(vim.treesitter.highlighter.active[vim.api.nvim_get_current_buf()] ~= nil)
+vim.cmd.edit(vim.fn.fnameescape(dir .. "/ts.txt"))
+out[#out + 1] = "TS_TXT_FT=" .. vim.bo.filetype .. " TS_TXT_MAPS=" .. maps("]]")
+print(table.concat(out, " "))
+LUA
+printf 'local function one()\n    return 1\nend\n\nlocal function two(a, b)\n    return a + b\nend\n' >"$SANDBOX/ts.lua"
+printf 'int f(int a)\n{\n    return a;\n}\n' >"$SANDBOX/ts.c"
+printf 'plain text\n' >"$SANDBOX/ts.txt"
+out="$(TS_DIR="$SANDBOX" nv "$SANDBOX/start.lua" 'lua vim.wait(1000)' "luafile $SANDBOX/ts_probe.lua")"
+EXPECTED_TS_MAPS="af/xo=Select_outer_function,if/xo=Select_inner_function,ac/xo=Select_outer_class,ic/xo=Select_inner_class,aa/xo=Select_outer_argument,ia/xo=Select_inner_argument,]m/nxo=Next_function_start,]]/nxo=Next_class_start,]M/nxo=Next_function_end,][/nxo=Next_class_end,[m/nxo=Prev_function_start,[[/nxo=Prev_class_start,[M/nxo=Prev_function_end,[]/nxo=Prev_class_end,<leader>a/n=Swap_with_next_argument,<leader>A/n=Swap_with_prev_argument"
+assert "the fixture is a lua buffer, which the ones below assume" contains "$out" "TS_FT=lua"
+assert "every textobject map is set on the buffer, in master's modes, with its desc" \
+  contains "$out" "TS_MAPS=$EXPECTED_TS_MAPS "
+assert "]m from the first function lands on the second" contains "$out" "TS_MOVE=5"
+assert "<leader>a swaps the argument under the cursor with the next" \
+  contains "$out" "TS_SWAP=[local function two(b, a)]"
+assert "dif deletes the body of the function the cursor is in" contains "$out" "TS_DIF_GONE=true"
+assert "...and nothing outside it (guards a dif that deleted everything)" contains "$out" "TS_DIF_KEPT=true"
+if contains "$out" "TS_LUA_INDENTS=0" && ! command -v tree-sitter >/dev/null 2>&1; then
+  printf "  \033[33mSKIP\033[0m  indent: no tree-sitter CLI, so nvim-treesitter's lua queries were never installed\n"
+else
+  assert "indent comes from treesitter, not the filetype's own indentexpr" \
+    contains "$out" "TS_INDENT=v:lua.require'nvim-treesitter'.indentexpr()"
+fi
+assert "the second fixture is a C buffer" contains "$out" "TS_C_FT=c"
+assert "a C file is highlighted by treesitter, which only this config starts" \
+  contains "$out" "TS_C_HL=true"
+assert "a text file gets none of the maps, so ]] is still Vim's own" \
+  contains "$out" "TS_TXT_FT=text TS_TXT_MAPS=]]/=none"
 # Not an assertion; the ones above have already failed. When setup did not run,
 # what nvim printed carries treesitter.lua's reason, which is the next thing
 # anyone will want.
-if ! contains "$out" "TS_AF=mapped" || ! contains "$out" "TS_INDENT=nvim_treesitter#indent()"; then
-  printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+if ! contains "$out" "TS_MAPS=$EXPECTED_TS_MAPS " || ! contains "$out" "TS_C_HL=true"; then
+  printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300)"
+fi
+
+echo
+echo "== nvim-treesitter's build installs the list, and clears what master left =="
+# lazy runs this build on install and on restore, in the real data dir, which
+# nothing here may build into. So the build function is taken out of
+# treesitter.lua and called by hand, on a stand-in plugin directory, with a
+# stand-in nvim-treesitter that records what it is asked for and finishes at
+# once, and a stand-in tree-sitter on PATH for it to find.
+#
+# The parser list is asserted whole, the way the leader mappings are: when this
+# fails it is usually not a bug but a parser added or removed, and this is the
+# line that records it.
+#
+# Proven by hand on copies of treesitter.lua: deleting the two deletes fails
+# both of their checks, and deleting the CLI check fails the last two.
+#
+# NO_TS_BIN holds nvim alone, so a PATH of it and the system's directories has
+# no tree-sitter on it from Homebrew.
+NO_TS_BIN="$TEST_TMP/no-ts-bin"
+mkdir -p "$NO_TS_BIN"
+ln -s "$(command -v nvim)" "$NO_TS_BIN/nvim"
+EXPECTED_TS_PARSERS="lua,vim,vimdoc,bash,markdown,markdown_inline,html,css,json,yaml,toml,query,javascript,typescript,python,rust,c,go,gomod,gosum,gowork,gotmpl"
+TS_FAKE_BIN="$TEST_TMP/ts-fake-bin"
+mkdir -p "$TS_FAKE_BIN"
+printf '#!/bin/sh\nexit 0\n' >"$TS_FAKE_BIN/tree-sitter"
+chmod +x "$TS_FAKE_BIN/tree-sitter"
+cat >"$SANDBOX/ts_build_probe.lua" <<'LUA'
+local calls = {}
+package.preload["nvim-treesitter"] = function()
+  local function task()
+    return { wait = function() return true end }
+  end
+  return {
+    install = function(langs)
+      calls[#calls + 1] = "install:" .. table.concat(langs, ",")
+      return task()
+    end,
+    update = function()
+      calls[#calls + 1] = "update"
+      return task()
+    end,
+  }
+end
+local dir = arg[2]
+for _, d in ipairs({ "parser", "parser-info", "lua" }) do
+  vim.fn.mkdir(dir .. "/" .. d, "p")
+end
+vim.fn.writefile({ "" }, dir .. "/parser/scss.so")
+vim.fn.writefile({ "" }, dir .. "/parser-info/scss.revision")
+vim.fn.writefile({ "" }, dir .. "/lua/keep.lua")
+local spec = dofile(arg[1])
+local ok, err = pcall(spec[1].build, { dir = dir })
+io.stdout:write(string.format("BUILD_OK=%s BUILD_ERR=[%s] BUILD_CALLS=%s PARSER_LEFT=%s INFO_LEFT=%s KEEP_LEFT=%s\n",
+  tostring(ok), tostring(err or ""):gsub("%s", "_"), table.concat(calls, ";"),
+  tostring(vim.uv.fs_stat(dir .. "/parser") ~= nil), tostring(vim.uv.fs_stat(dir .. "/parser-info") ~= nil),
+  tostring(vim.uv.fs_stat(dir .. "/lua/keep.lua") ~= nil)))
+LUA
+out="$(PATH="$TS_FAKE_BIN:$NO_TS_BIN:/usr/bin:/bin" XDG_STATE_HOME="$STATE" XDG_CACHE_HOME="$CACHE" \
+  nvim --clean --headless -l "$SANDBOX/ts_build_probe.lua" \
+  "$NVIM_CONFIG/lua/rich/plugins/treesitter.lua" "$TEST_TMP/ts-plugin" 2>&1)"
+assert "the build succeeds against an nvim-treesitter that does what it is asked" contains "$out" "BUILD_OK=true"
+assert "it installs exactly the parser list, then updates what is installed" \
+  contains "$out" "BUILD_CALLS=install:$EXPECTED_TS_PARSERS;update "
+assert "it removes the parsers master built into the plugin directory" contains "$out" "PARSER_LEFT=false"
+assert "...and their revision files" contains "$out" "INFO_LEFT=false"
+assert "...and nothing else there (guards a build that deleted the plugin)" contains "$out" "KEEP_LEFT=true"
+if ! contains "$out" "BUILD_OK=true"; then
+  printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300)"
+fi
+# The same build with no tree-sitter on PATH: a failed build is how lazy shows
+# it, and it must not get as far as asking for a parser.
+out="$(PATH="$NO_TS_BIN:/usr/bin:/bin" XDG_STATE_HOME="$STATE" XDG_CACHE_HOME="$CACHE" \
+  nvim --clean --headless -l "$SANDBOX/ts_build_probe.lua" \
+  "$NVIM_CONFIG/lua/rich/plugins/treesitter.lua" "$TEST_TMP/ts-plugin-nocli" 2>&1)"
+# Spaces are underscores in BUILD_ERR, so the error is the only place this
+# can come from.
+assert "with no tree-sitter CLI the build fails, saying what to install" \
+  contains "$out" "brew_install_tree-sitter-cli"
+refute "...before it asks for a parser it cannot build" contains "$out" "BUILD_CALLS=install"
+
+echo
+echo "== a missing tree-sitter CLI is said once, not left to fail per parser =="
+# main builds every parser with the tree-sitter CLI. Without it each install
+# downloads the parser's source and then fails, one error per language, and
+# auto-install does that again for every new filetype. treesitter.lua checks
+# for the CLI first and says what to install instead. So: a language nvim-
+# treesitter has a parser for and this machine does not, asked for in an nvim
+# whose PATH holds nvim, the system's tools and nothing from Homebrew. Two of
+# them, one after the other, because the second must not say it again.
+#
+# The probe reports the languages it picked and whether nvim found any
+# tree-sitter at all, so a pass cannot come from there being nothing to
+# install or from a CLI that was there after all. Nothing is downloaded: with no
+# CLI, treesitter.lua does not start an install. Proven by hand on copies of
+# the config: deleting the loud() call from have_cli() fails the first check,
+# never setting warned_cli fails the second, and making have_cli() answer yes
+# regardless fails the first and the last.
+cat >"$SANDBOX/ts_cli_probe.lua" <<'LUA'
+local parsers = require("nvim-treesitter.parsers")
+local installed = require("nvim-treesitter").get_installed()
+local langs = vim.tbl_keys(parsers)
+table.sort(langs)
+local picks = {}
+for _, lang in ipairs(langs) do
+  local p = parsers[lang]
+  if #picks < 2 and p.install_info and p.tier ~= 4 and not vim.list_contains(installed, lang)
+    and vim.treesitter.language.get_lang(lang) == lang and not vim.treesitter.language.add(lang) then
+    picks[#picks + 1] = lang
+  end
+end
+print("TS_CLI=[" .. vim.fn.exepath("tree-sitter") .. "] TS_PICKED=" .. (#picks == 2 and table.concat(picks, ",") or "none"))
+for _, lang in ipairs(#picks == 2 and picks or {}) do
+  vim.cmd.enew()
+  vim.bo.filetype = lang
+  vim.wait(500)
+end
+LUA
+out="$(PATH="$CLIP_BIN:$NO_TS_BIN:/usr/bin:/bin" XDG_STATE_HOME="$STATE" XDG_CACHE_HOME="$CACHE" \
+  nvim --headless "$SANDBOX/start.lua" -c 'lua vim.wait(1000)' -c "luafile $SANDBOX/ts_cli_probe.lua" -c 'qa!' 2>&1)"
+if ! contains "$out" "TS_CLI=[]"; then
+  printf '  \033[33mSKIP\033[0m  a tree-sitter CLI is on the system PATH, so its absence cannot be set up\n'
+elif contains "$out" "TS_PICKED=none"; then
+  no "found no language that nvim-treesitter knows and this machine has not installed (guards a vacuous pass)"
+  printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300)"
+else
+  printf '    %s\n' "$(printf '%s' "$out" | grep -o 'TS_PICKED=[^ ]*' | head -1)"
+  said="$(printf '%s\n' "$out" | grep -c 'no tree-sitter on PATH (brew install tree-sitter-cli)')"
+  assert "with no tree-sitter CLI, treesitter.lua says which to install" [ "${said:-0}" -ge 1 ]
+  assert "...once, not once per language" [ "${said:-0}" -le 1 ]
+  refute "...and does not start an install that can only fail" contains "$out" "Downloading"
 fi
 
 echo

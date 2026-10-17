@@ -765,6 +765,11 @@ mutate "a hand clone beside install_tmux_plugins is caught" "CI installs the tmu
 mutate "CI calling an install_tmux_plugins bootstrap.sh does not define is caught" "CI installs the tmux plugins with" \
   sed -i '' 's/^install_tmux_plugins() {$/install_plugins_for_tmux() {/' bootstrap.sh
 
+# Off the brew line only: the comment above it still names tree-sitter-cli,
+# and must not be what satisfies the check.
+mutate "CI without the tree-sitter CLI is caught" "CI installs tree-sitter-cli" \
+  sed -i '' 's/neovim tree-sitter-cli tmux/neovim tmux/' .github/workflows/ci.yml
+
 # ------------------------------------- assertions that could pass while being wrong
 
 # The old version of this compared COUNTS: renaming a binding kept the total at
@@ -840,6 +845,17 @@ mutate "bootstrap's main() not installing the tmux plugins is caught" "installs 
 
 mutate "the call left only as a comment in main() is caught" "installs the tmux plugins, so a fresh machine" \
   sed -i '' 's/^  install_tmux_plugins$/  # install_tmux_plugins/' bootstrap.sh
+
+# nvim-treesitter's main branch builds every parser with the CLI.
+mutate "a fresh machine without the tree-sitter CLI is caught" "bootstrap.sh installs tree-sitter-cli" \
+  sed -i '' '/^    tree-sitter-cli$/d' bootstrap.sh
+
+# The formula that looks right and is not: tree-sitter is the library alone.
+mutate "the tree-sitter library in the CLI's place is caught" "bootstrap.sh installs tree-sitter-cli" \
+  sed -i '' 's/^    tree-sitter-cli$/    tree-sitter/' bootstrap.sh
+
+mutate "a branch that cannot be read out of the lock fails rather than passing" "bootstrap.sh installs tree-sitter-cli" \
+  sed -i '' 's/"nvim-treesitter": { "branch": "main"/"nvim-treesitter": { "branch": ""/' nvim/.config/nvim/lazy-lock.json
 
 # ------------------------------------------- constants written down more than once
 
