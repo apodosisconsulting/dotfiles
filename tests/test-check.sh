@@ -249,6 +249,14 @@ mutate "a prefix ] that never reads pbpaste is caught" "tmux copies to and paste
 mutate "an untracked lazy-lock.json is caught" "lazy-lock" \
   git rm -q --cached nvim/.config/nvim/lazy-lock.json
 
+# Tracked but unreadable: lazy decodes it under pcall and carries on with no
+# lock at all. A write cut off mid-entry is the shape this takes.
+mutate "a lazy-lock.json that does not parse is caught" "parses the way lazy reads it" \
+  bash -c 'head -c 200 nvim/.config/nvim/lazy-lock.json >lock.tmp && mv lock.tmp nvim/.config/nvim/lazy-lock.json'
+
+mutate "a lazy-lock.json that parses and pins nothing is caught" "parses the way lazy reads it" \
+  bash -c 'printf "{}\n" >nvim/.config/nvim/lazy-lock.json'
+
 mutate "a lua syntax error is caught" "every lua file parses" \
   bash -c 'printf "\nthis is not lua((\n" >> nvim/.config/nvim/lua/rich/plugins/fidget.lua'
 
@@ -356,8 +364,26 @@ mutate_machine "a missing git hook is caught" "hooks installed" \
 mutate_machine "hooks pointing nowhere is caught" "hooks installed" \
   git config core.hooksPath .nonexistent-hooks
 
-mutate_machine "a git identity that disagrees with the repo is caught" "user.email agrees" \
+mutate_machine "a git identity that disagrees with the repo is caught" "keys the repo's git config sets" \
   git config --local user.email someone-else@example.com
+
+# Not just the identity: ANY key git resolves to something else makes the
+# repo's line for it dead. The repo's side is changed here rather than the live
+# side, so this needs nothing written outside the copy.
+mutate_machine "any other key that disagrees with what git uses is caught" "keys the repo's git config sets" \
+  sed -i '' 's/algorithm = histogram/algorithm = patience/' git/.config/git/config
+
+mutate_machine "a git config with no keys fails rather than passing vacuously" "keys the repo's git config sets" \
+  bash -c ': >git/.config/git/config'
+
+# The defect this exists for, replayed: a guard.log the guard wrote into the
+# repo, committed. -f because .gitignore now refuses it, which is the point.
+mutate "a tracked guard.log is caught" "no runtime file the guard or the 99 plugin writes" \
+  sh -c 'echo x >guard.log && git add -f guard.log'
+
+# The 99 plugin's state, anywhere in the tree.
+mutate "a tracked 99 scratch file is caught" "no runtime file the guard or the 99 plugin writes" \
+  sh -c 'mkdir -p tmp && echo x >tmp/99-state && git add -f tmp/99-state'
 
 # ------------------------------------------------------ what the linters can see
 
@@ -366,6 +392,18 @@ mutate "a shell script with no shebang is caught, because lint would skip it" "d
 
 mutate "CI no longer running the linters is caught" "CI runs 'make lint'" \
   sed -i '' 's/^        run: make lint$/        run: true/' .github/workflows/ci.yml
+
+# The defect this exists for: CI priming with sync, which updates every plugin
+# past the lock before the suites run.
+mutate "CI priming the plugins with sync is caught" "at the commits lazy-lock.json pins" \
+  sed -i '' 's/"+Lazy! restore"/"+Lazy! sync"/' .github/workflows/ci.yml
+
+# A restore that a later update undoes is no restore at all.
+mutate "an update after the restore is caught" "at the commits lazy-lock.json pins" \
+  sed -i '' 's/"+Lazy! restore" +qa/"+Lazy! restore" "+Lazy! update" +qa/' .github/workflows/ci.yml
+
+mutate "CI never running restore at all is caught" "at the commits lazy-lock.json pins" \
+  sed -i '' 's/"+Lazy! restore" +qa/+qa/' .github/workflows/ci.yml
 
 # ------------------------------------- assertions that could pass while being wrong
 
@@ -387,6 +425,54 @@ mutate "a copy in a test suite disagreeing is caught too" "copies of the stow pa
 mutate_adds "a recipeless target on a SECOND .PHONY line is caught" "has a recipe" \
   "declared .PHONY but has no recipe" \
   bash -c 'printf "\n.PHONY: ghost\n" >> Makefile'
+
+# ---------------------------------------------------- what a fresh machine gets
+
+# A formatter conform runs that bootstrap never installs, and a linter the same.
+mutate "a formatter bootstrap does not install is caught" "formatters and linters the nvim config runs" \
+  sed -i '' '/^    black$/d' bootstrap.sh
+
+mutate "a linter bootstrap does not install is caught" "formatters and linters the nvim config runs" \
+  sed -i '' '/^    shellcheck$/d' bootstrap.sh
+
+# The two named exceptions have to stay conditional on what provides them, or
+# naming them would excuse them for good.
+mutate "gofmt without go is caught" "formatters and linters the nvim config runs" \
+  sed -i '' '/^    go$/d' bootstrap.sh
+
+mutate "rustfmt without the rustup install is caught" "formatters and linters the nvim config runs" \
+  sed -i '' '/sh\.rustup\.rs/d' bootstrap.sh
+
+# The guard that is load-bearing: no formatters read means the loop runs zero
+# times, and "all 0 installed" would otherwise pass.
+mutate "no formatters read out of conform.lua fails rather than passing vacuously" "formatters and linters the nvim config runs" \
+  sed -i '' 's/formatters_by_ft = {/formatters_for = {/' nvim/.config/nvim/lua/rich/plugins/conform.lua
+
+# An entry written over three lines, a layout stylua keeps, with bootstrap's
+# line for one tool gone. The grep this check used to be read neither the name
+# on the inner line nor any entry after the first such one, and passed.
+spread_and_drop() { # $1=plugin file  $2=filetype to spread  $3=package to drop
+  FT="$2" perl -pi -e \
+    's/^(\s*)\Q$ENV{FT}\E = \{ ("[^"]+") \},$/$1$ENV{FT} = {\n$1    $2,\n$1},/' "$1" &&
+    sed -i '' "/^    $3\$/d" bootstrap.sh
+}
+
+mutate "a formatter on the inner line of a multi-line entry is read" "formatters and linters the nvim config runs" \
+  spread_and_drop nvim/.config/nvim/lua/rich/plugins/conform.lua python black
+
+mutate "the entries after a multi-line one are read too" "formatters and linters the nvim config runs" \
+  spread_and_drop nvim/.config/nvim/lua/rich/plugins/conform.lua python clang-format
+
+mutate "a linter in a multi-line entry is read" "formatters and linters the nvim config runs" \
+  spread_and_drop nvim/.config/nvim/lua/rich/plugins/lint.lua sh shellcheck
+
+# lint.lua had no guard at all: reading nothing out of it passed.
+mutate "no linters read out of lint.lua fails rather than passing vacuously" "formatters and linters the nvim config runs" \
+  sed -i '' 's/lint.linters_by_ft = {/lint.linters_for = {/' nvim/.config/nvim/lua/rich/plugins/lint.lua
+
+# A filetype that yields no name is reported, not counted as nothing to install.
+mutate "a filetype whose formatters are not a list of names is caught" "formatters and linters the nvim config runs" \
+  sed -i '' 's/lua = { "stylua" },/lua = function() return { "stylua" } end,/' nvim/.config/nvim/lua/rich/plugins/conform.lua
 
 # ------------------------------------------- constants written down more than once
 
@@ -543,6 +629,33 @@ else
   out="$(run_check_full)"
   refute "the absent prefix is not reported when the file names both" \
     contains "$out" "$absent, which does not exist"
+fi
+
+echo
+echo "== a git -c for one command is not the repo's git config going dead =="
+# `git -c core.editor=true commit --amend` is the usual non-interactive amend,
+# and git hands that setting to the pre-commit hook, so to check.sh, through the
+# environment: GIT_CONFIG_PARAMETERS for -c, GIT_CONFIG_COUNT for the same set
+# from outside. It lasts one command and overrides no file, and the comparison
+# of the repo's git config with what git uses called the repo's value dead for
+# it and refused the commit. Driven through a real commit in the copy, so the
+# hook gets the override the way git delivers it rather than the way this file
+# assumes it does. Only meaningful where the machine half passes.
+reset_repo
+full="$(run_check_full)"
+if ! contains "$full" "0 failure(s)" || ! contains "$full" "keys the repo's git config sets"; then
+  printf '  \033[33mSKIP\033[0m  the machine half does not pass here\n'
+else
+  rc=0
+  out="$(cd "$WORK" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=commit.verbose GIT_CONFIG_VALUE_0=false \
+    git -c core.editor=a-one-off-editor commit -q --allow-empty -m probe 2>&1)" || rc=$?
+  # The refusals below pass on silence, so first: the hook ran the comparison.
+  assert "the hook still compares every key the repo's git config sets" \
+    contains "$out" "keys the repo's git config sets are what git actually uses"
+  refute "a git -c override is not reported as the repo's value going dead" \
+    contains "$out" "core.editor: repo says"
+  refute "nor is one passed in GIT_CONFIG_COUNT" contains "$out" "commit.verbose: repo says"
+  assert "and the commit goes through" [ "$rc" -eq 0 ]
 fi
 
 echo

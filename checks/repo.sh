@@ -168,6 +168,27 @@ else
   bad "lazy-lock.json is not tracked — a fresh machine gets whatever is newest that day"
 fi
 
+# Tracked is not the same as read. lazy loads the lock with a pcall'd
+# vim.json.decode and, when that fails, carries on with an EMPTY lock: no error,
+# no message, and every plugin installed or restored at the tip of its branch
+# instead of the commit written here. A merge-conflict marker or a truncated
+# write is enough. So decode it with the decoder lazy uses, and count what it
+# pins. nvim only, like the parse check above: a machine without nvim has no use
+# for the lock, and CI installs it.
+if command -v nvim >/dev/null 2>&1; then
+  lock_pins="$(printf '%s\n' 'local f = assert(io.open(arg[1]))
+local ok, lock = pcall(vim.json.decode, f:read("*a"))
+io.stdout:write(ok and type(lock) == "table" and tostring(vim.tbl_count(lock)) or "unparsed", "\n")' |
+    nvim --clean --headless -l /dev/stdin nvim/.config/nvim/lazy-lock.json 2>/dev/null)"
+  case "$lock_pins" in
+    '' | *[!0-9]*) bad "lazy-lock.json does not parse — lazy drops it without a word and installs every plugin at the tip of its branch" ;;
+    0) bad "lazy-lock.json parses but pins nothing — every plugin installs at the tip of its branch" ;;
+    *) ok "lazy-lock.json parses the way lazy reads it, and pins $lock_pins plugins" ;;
+  esac
+else
+  meh "nvim not installed, cannot decode lazy-lock.json"
+fi
+
 # Line wrap, and which way round it has to point.
 #
 # This is the one option in options.lua whose value has already been changed by
@@ -644,6 +665,116 @@ for target in $phony; do
   fi
 done
 
+section "Fresh machine"
+# checks/machine.sh warns when a formatter conform.lua names is missing from
+# THIS machine. Nothing asked whether bootstrap.sh would install it on the NEXT
+# one, so a formatter or linter added to the nvim config and not to bootstrap's
+# brew list is a silent no-op for its filetypes on every fresh machine, while
+# the machine it was added on, set up by hand, stays green.
+#
+# A tool is matched to a formula of the same name. Two come with a toolchain
+# instead: gofmt with go, rustfmt with the rustup install install_rust runs.
+# They are named here, with what provides them, so the exception is visible
+# rather than a gap, and a tool whose formula is named differently needs a line
+# here the same way. The brew list is brew_install_pkgs' `local pkgs=(` array,
+# comments dropped, one package per word; the rustup install has to be a line
+# of code, not a comment.
+#
+# The two tables are READ, by nvim, not grepped. A line-based read took the
+# quoted names off each `ft = {` line, and stylua keeps an entry written over
+# several lines as it is: `python = {`, `"black",`, `},`. The names on the inner
+# line were skipped, the entry's own `},` ended the range, and every entry after
+# it was dropped too, so a partial read reported "all 2" and passed with three
+# formatters missing from bootstrap. conform.lua returns its spec, so the table
+# is the spec's opts. lint.lua fills linters_by_ft inside its config function,
+# so that function runs against a stand-in for require("lint") that only keeps
+# what is assigned to it. nvim only, like the lock and parse checks: CI installs
+# it before these run.
+#
+# Nothing read is never a pass. conform.lua is required to yield formatters,
+# lint.lua to yield linters when it is there, and every filetype in either to
+# yield at least one name: a function or an empty list in its place is reported
+# rather than counted as nothing to install. lint.lua is not itself required:
+# it is one plugin's config, and linting may stop going through it.
+boot_pkgs="$(sed -n '/^brew_install_pkgs()/,/^}/p' bootstrap.sh |
+  sed -n '/local pkgs=(/,/)/p' |
+  sed -e 's/#.*//' -e 's/local pkgs=(//' -e 's/)//' |
+  tr -s '[:blank:]' '\n' | grep -v '^$')"
+boot_rustup="$(grep -vE '^[[:space:]]*#' bootstrap.sh | grep -cF 'sh.rustup.rs')"
+conform_lua=nvim/.config/nvim/lua/rich/plugins/conform.lua
+lint_lua=nvim/.config/nvim/lua/rich/plugins/lint.lua
+if command -v nvim >/dev/null 2>&1; then
+  lint_arg=""
+  [ -f "$lint_lua" ] && lint_arg="$lint_lua"
+  # One line per name, "formatter black" or "linter shellcheck", and "unread
+  # formatter lua" for a filetype that yields none. A nested list is conform's
+  # older way of naming alternatives, so its names count too; keys that are
+  # not list positions, like stop_after_first, are options and are skipped.
+  nvim_tools="$(printf '%s\n' 'local function names(v, out)
+  for _, x in ipairs(v) do
+    if type(x) == "string" then
+      out[#out + 1] = x
+    elseif type(x) == "table" then
+      names(x, out)
+    end
+  end
+  return out
+end
+local function emit(kind, by_ft)
+  if type(by_ft) ~= "table" then return end
+  for ft, v in pairs(by_ft) do
+    local got = type(v) == "table" and names(v, {}) or {}
+    if #got == 0 then io.stdout:write("unread ", kind, " ", tostring(ft), "\n") end
+    for _, n in ipairs(got) do io.stdout:write(kind, " ", n, "\n") end
+  end
+end
+local ok, spec = pcall(dofile, arg[1])
+if ok and type(spec) == "table" and type(spec.opts) == "table" then
+  emit("formatter", spec.opts.formatters_by_ft)
+end
+if arg[2] then
+  local lint = { linters = {}, linters_by_ft = {}, try_lint = function() end }
+  package.preload.lint = function() return lint end
+  ok, spec = pcall(dofile, arg[2])
+  if ok and type(spec) == "table" and type(spec.config) == "function" then
+    pcall(spec.config, spec, type(spec.opts) == "table" and spec.opts or {})
+  end
+  emit("linter", lint.linters_by_ft)
+end' | nvim --clean --headless -l /dev/stdin "$conform_lua" ${lint_arg:+"$lint_arg"} 2>/dev/null)"
+  conform_tools="$(printf '%s\n' "$nvim_tools" | sed -n 's/^formatter //p')"
+  lint_tools="$(printf '%s\n' "$nvim_tools" | sed -n 's/^linter //p')"
+  fresh_bad=0
+  if [ -z "$boot_pkgs" ] || [ -z "$conform_tools" ]; then
+    bad "could not read bootstrap's brew list or conform's formatters — the comparison would be vacuous"
+    fresh_bad=$((fresh_bad + 1))
+  fi
+  if [ -n "$lint_arg" ] && [ -z "$lint_tools" ]; then
+    bad "read no linters out of lint.lua — whether bootstrap installs them would go unchecked"
+    fresh_bad=$((fresh_bad + 1))
+  fi
+  while read -r kind ft; do
+    [ -n "$ft" ] || continue
+    bad "the $kind entry for $ft is not a list of names — whether bootstrap installs what it runs goes unchecked"
+    fresh_bad=$((fresh_bad + 1))
+  done <<<"$(printf '%s\n' "$nvim_tools" | sed -n 's/^unread //p')"
+  tools_seen=0
+  if [ -n "$boot_pkgs" ]; then
+    for t in $(printf '%s\n%s\n' "$conform_tools" "$lint_tools" | grep -v '^$' | sort -u); do
+      tools_seen=$((tools_seen + 1))
+      case "$t" in
+        gofmt) grep -qxF go <<<"$boot_pkgs" && continue ;;
+        rustfmt) [ "${boot_rustup:-0}" -gt 0 ] && continue ;;
+        *) grep -qxF "$t" <<<"$boot_pkgs" && continue ;;
+      esac
+      bad "the nvim config runs $t, and bootstrap.sh does not install it — on a fresh machine its filetypes are silently not formatted or linted"
+      fresh_bad=$((fresh_bad + 1))
+    done
+  fi
+  [ "$fresh_bad" -eq 0 ] && ok "bootstrap.sh installs all $tools_seen formatters and linters the nvim config runs"
+else
+  meh "nvim not installed, cannot read the formatters and linters the nvim config runs"
+fi
+
 section "Git hooks"
 # A hook and a make target are two copies of one command, and everything that
 # DESCRIBES a hook — the README, the Makefile's own help, bootstrap.sh, the
@@ -1000,6 +1131,28 @@ fi
 
 [ "$readme_bad" -eq 0 ] && ok "the README describes nothing that is not here (targets, paths, packages, bindings, figures)"
 
+section "What is tracked"
+# Files a program here WRITES at runtime have no business in the history. A
+# guard.log went in with a commit about check.sh: the resurrect guard writes its
+# log, its hold state and its pane-archive stash beside whatever save it is
+# handed, so running it by hand on a relative path drops them in the cwd and
+# `git add -A` does the rest. The 99 plugin's tmp_dir is relative to the cwd
+# too, and its prompt files hold excerpts of whatever was being edited.
+# .gitignore keeps them out; this is what notices one that gets past it, by
+# `git add -f` or by a rule that stops matching. By basename, at any depth.
+tracked_n="$(git ls-files | grep -c .)"
+runtime_tracked="$(git ls-files | awk -F/ '
+  $NF == "guard.log" || $NF == ".guard-state" || $NF == ".guard-pane-contents.tar.gz" || $NF ~ /^99-/ { print }
+')"
+if [ "${tracked_n:-0}" -eq 0 ]; then
+  bad "git ls-files listed nothing — the scan for tracked runtime files would be vacuous"
+elif [ -n "$runtime_tracked" ]; then
+  bad "runtime files are tracked — the guard or the 99 plugin wrote them, and nothing here reads them:"
+  printf '%s\n' "$runtime_tracked" | sed 's/^/      /'
+else
+  ok "no runtime file the guard or the 99 plugin writes is tracked"
+fi
+
 section "Lint coverage"
 # `make lint` derives its file set from the shebangs, so a script only reaches
 # the linters by starting with one. A shell script without a shebang would be
@@ -1062,5 +1215,21 @@ else
     ok "CI runs on macOS, which is the only platform bootstrap.sh supports"
   else
     bad "CI does not run on macOS, so it cannot exercise this repo honestly"
+  fi
+  # The plugins CI tests have to be the ones lazy-lock.json pins, which is what
+  # a fresh machine gets. CI primed them with `Lazy! sync`, and sync runs
+  # update: every plugin moved to the tip of its branch and the lock was
+  # rewritten, so the suites went green on versions this repo never chose.
+  # restore is update held to the lock. Comment lines are dropped so the
+  # comment explaining this cannot satisfy it, and a sync or update ANYWHERE
+  # fails, because a later step running one would undo the restore.
+  lazy_cmds="$(grep -vE '^[[:space:]]*#' "$CI" | grep -oE 'Lazy!?[[:space:]]+[a-z]+')"
+  lazy_unpinned="$(grep -E '[[:space:]](sync|update)$' <<<"$lazy_cmds" | sort -u | tr '\n' ' ')"
+  if [ -n "$lazy_unpinned" ]; then
+    bad "CI runs ${lazy_unpinned}— that moves every plugin past lazy-lock.json, so CI tests versions this repo never pinned"
+  elif ! grep -qE '[[:space:]]restore$' <<<"$lazy_cmds"; then
+    bad "CI never runs 'Lazy! restore', so nothing holds the plugins it tests to lazy-lock.json"
+  else
+    ok "CI primes the plugins with 'Lazy! restore', at the commits lazy-lock.json pins"
   fi
 fi

@@ -140,15 +140,26 @@ echo "== a half-set-up machine must still be able to commit =="
 # reports `!` and does not fail the run. If one of them were ever turned into a
 # hard failure, every commit on that machine would be refused until someone
 # installed a formatter, and the person it happened to would have no idea why.
+#
+# The PATH without stylua mirrors only the entries that hold one, each with a
+# single ln over the whole directory, and keeps every other entry as it is, in
+# its place, so lookup order is unchanged. It used to mirror the whole PATH one
+# file at a time: a basename and an ln for every executable on it, two forks
+# each across thousands of files, and most of this suite's wall clock, which
+# pre-push pays on every push.
 shim="$TEST_TMP/nostylua"
-mkdir -p "$shim"
+nostylua_path=""
+n=0
 while IFS= read -r d; do
-  [ -d "$d" ] || continue
-  for f in "$d"/*; do
-    b="$(basename "$f")"
-    [ "$b" = "stylua" ] && continue
-    [ -e "$shim/$b" ] || ln -s "$f" "$shim/$b" 2>/dev/null
-  done
+  [ -n "$d" ] || continue
+  if [ -e "$d/stylua" ]; then
+    n=$((n + 1))
+    mkdir -p "$shim/$n"
+    ln -s "$d"/* "$shim/$n/" 2>/dev/null
+    rm -f "$shim/$n/stylua"
+    d="$shim/$n"
+  fi
+  nostylua_path="${nostylua_path:+$nostylua_path:}$d"
 done <<<"$(printf '%s' "$PATH" | tr ':' '\n')"
 
 fail_count() { # $1... = env prefix; echoes check.sh's failure count
@@ -156,7 +167,9 @@ fail_count() { # $1... = env prefix; echoes check.sh's failure count
     sed -n 's/.*, \([0-9][0-9]*\) failure(s).*/\1/p' | tail -1
 }
 
-if [ -e "$shim/stylua" ]; then
+# Asked of the PATH itself, not of the shim: a stylua the loop did not see, by
+# any route, is the one that would make the comparison below meaningless.
+if PATH="$nostylua_path" command -v stylua >/dev/null 2>&1; then
   printf '  \033[33mSKIP\033[0m  could not build a PATH without stylua\n'
 else
   # COMPARATIVE, not absolute. "check.sh passes with a formatter missing" is not
@@ -165,10 +178,12 @@ else
   # invariant that actually matters holds anywhere: removing a formatter must
   # add a WARNING and must not change the number of FAILURES.
   base_fails="$(fail_count env)"
-  nostylua_fails="$(fail_count env PATH="$shim")"
   # Stripped, because the markers are colour-wrapped: the literal "! formatter"
   # never appears in the raw output, there is an escape sequence between them.
-  out="$(PATH="$shim" "$REPO_ROOT/check.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
+  # One run feeds both the wording and the count; this used to run the same
+  # check.sh twice, once for each.
+  out="$(PATH="$nostylua_path" "$REPO_ROOT/check.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
+  nostylua_fails="$(printf '%s\n' "$out" | sed -n 's/.*, \([0-9][0-9]*\) failure(s).*/\1/p' | tail -1)"
 
   printf '    failures with stylua: %s, without: %s\n' "${base_fails:-?}" "${nostylua_fails:-?}"
   # One command, not two joined by &&: `assert desc [ a ] && [ b ]` asserts only

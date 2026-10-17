@@ -8,3 +8,9 @@ __MACOSX/
 tmux/.config/tmux/plugins/
 tmp/
 .claude/
+# The resurrect guard writes its log, its hold state and its pane-archive stash
+# beside whatever save it is handed, so running it by hand on a relative path
+# drops them in the cwd. A guard.log was committed that way.
+guard.log
+.guard-state
+.guard-pane-contents.tar.gz

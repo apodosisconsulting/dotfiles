@@ -11,6 +11,13 @@
 # plugins are already installed there, and pointing it elsewhere would make lazy
 # clone every one of them over the network on every run.
 #
+# XDG_CACHE_HOME is redirected too. vim.loader, which lazy turns on, compiles
+# each lua file it loads into the cache's luac dir, under a name made from the
+# file's full path, and nothing ever prunes that dir. Every file this suite
+# loads from its scratch dir, which is deleted on exit, left an orphan in the
+# real cache on every run: the negative control's copy of the config alone
+# left 21 a run.
+#
 # Invocation matters. `nvim -l script.lua` does NOT put the config's runtime
 # path in scope — require("lazy...") fails outright and an LSP probe times out
 # reporting nothing attached, which looks exactly like "LSP cannot be driven
@@ -29,12 +36,18 @@ SUITE_SLOW=1
 
 command -v nvim >/dev/null 2>&1 || skip_suite "nvim is not installed"
 
-NVIM_CONFIG="$HOME/.config/nvim"
+# Where nvim will look, not where the stow tree is: stdpath("config") follows
+# XDG_CONFIG_HOME, which is how this suite is pointed at a worktree's config
+# instead of the stowed one. The negative control below copies this directory,
+# and with $HOME/.config/nvim written here it broke a copy of the main
+# checkout's config while every other check tested the worktree's.
+NVIM_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
 [ -f "$NVIM_CONFIG/init.lua" ] || skip_suite "no nvim config at $NVIM_CONFIG"
 
 STATE="$TEST_TMP/state"
+CACHE="$TEST_TMP/cache"
 SANDBOX="$TEST_TMP/sandbox"
-mkdir -p "$STATE" "$SANDBOX"
+mkdir -p "$STATE" "$CACHE" "$SANDBOX"
 
 # The system clipboard is shimmed for every nvim this suite starts.
 #
@@ -63,11 +76,47 @@ nv() { # $1 = file, $2... = -c commands
   local args=()
   local c
   for c in "$@"; do args+=(-c "$c"); done
-  PATH="$CLIP_BIN:$PATH" XDG_STATE_HOME="$STATE" nvim --headless "$file" "${args[@]}" -c 'qa!' 2>&1
+  # ${args[@]+...}, not a bare "${args[@]}": under set -u, bash 3.2 -- the
+  # macOS /bin/bash that runs this suite -- calls an EMPTY array unbound and
+  # abandons the command. The one caller with no -c commands is the startup
+  # check below, so nvim never started there, the substitution came back empty,
+  # and "no errors on startup" passed on that emptiness for as long as it
+  # existed. The negative control under it is what keeps this from coming back.
+  PATH="$CLIP_BIN:$PATH" XDG_STATE_HOME="$STATE" XDG_CACHE_HOME="$CACHE" \
+    nvim --headless "$file" ${args[@]+"${args[@]}"} -c 'qa!' 2>&1
 }
 
 echo "== it starts, and starts clean =="
 printf 'local x = 1\n' >"$SANDBOX/start.lua"
+# The negative control copies NVIM_CONFIG, so before it: that is the config
+# nvim loads.
+out="$(nv "$SANDBOX/start.lua" 'lua print("CONFIG=[" .. vim.fn.stdpath("config") .. "]")')"
+assert "the config the control copies is the one nvim loads ($NVIM_CONFIG)" \
+  contains "$out" "CONFIG=[$NVIM_CONFIG]"
+# Then the negative control, ahead of the check it guards. "No errors" is an
+# assertion about EMPTY output, and empty is also what a probe that never ran
+# produces -- which is exactly how this check passed while nv() was failing
+# before it reached nvim. So the same call, with no -c commands, against a copy
+# of the config that throws at the end of init.lua, has to come back with that
+# error in it. If it does not, the clean result below proves nothing.
+#
+# What it shows is that nv() reaches nvim with no -c commands and that an
+# error thrown by init.lua reaches the captured output. Not that every startup
+# error does: init.lua has returned before any plugin that waits for
+# BufReadPre, BufReadPost or VeryLazy has run its config, so the throw comes
+# before them, and an error from one of those is outside what this proves.
+#
+# XDG_DATA_HOME is left alone, so the copy finds the installed plugins and lazy
+# clones nothing. cp's complaints are dropped: a live config can hold a
+# dangling link an old stow left behind, which nvim never opens and the control
+# does not need.
+BROKEN="$TEST_TMP/broken-config"
+mkdir -p "$BROKEN"
+cp -RL "$NVIM_CONFIG" "$BROKEN/nvim" 2>/dev/null
+printf '\nerror("negative control")\n' >>"$BROKEN/nvim/init.lua"
+out="$(XDG_CONFIG_HOME="$BROKEN" nv "$SANDBOX/start.lua")"
+assert "a config that throws at startup is reported, so the next check can fail" \
+  contains "$out" "negative control"
 out="$(nv "$SANDBOX/start.lua")"
 assert "no errors on startup" [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]
 
@@ -282,7 +331,7 @@ echo "== pyright resolves what a folder of loose scripts imports =="
 # folders under this suite's scratch dir, and the cd it does keeps anything a
 # plugin writes into the cwd on exit in there too.
 if [ -x "$HOME/.local/share/nvim/mason/bin/pyright-langserver" ]; then
-  out="$(TMPDIR="$TEST_TMP" PATH="$CLIP_BIN:$PATH" XDG_STATE_HOME="$STATE" \
+  out="$(TMPDIR="$TEST_TMP" PATH="$CLIP_BIN:$PATH" XDG_STATE_HOME="$STATE" XDG_CACHE_HOME="$CACHE" \
     nvim --headless -c "luafile $REPO_ROOT/tests/helpers/pyright-probe.lua" 2>&1)"
   # Only an explicit =false is a skip. A probe that died before printing it is
   # not "a marker sits above"; it falls through, fails its assertions, and the
@@ -573,5 +622,19 @@ echo
 echo "== nothing leaked into the real config or repo =="
 assert "the scratch state dir was used" [ -d "$STATE" ]
 refute "no stray files were left in the sandbox's parent" [ -e "$TEST_TMP/shada" ]
+# vim.loader names a compiled file after the path it came from, so this run's
+# leftovers are the names holding this run's scratch dir. The scratch cache
+# having some is what gives the real one having none a meaning: a loader that
+# cached nothing at all would pass that on its own.
+run_tag="$(basename "$TEST_TMP")"
+real_luac="${XDG_CACHE_HOME:-$HOME/.cache}/nvim/luac"
+ours="$(find "$CACHE/nvim/luac" -maxdepth 1 -name "*$run_tag*" 2>/dev/null | wc -l | tr -d ' ')"
+leaked="$(find "$real_luac" -maxdepth 1 -name "*$run_tag*" 2>/dev/null | wc -l | tr -d ' ')"
+if [ "${ours:-0}" -eq 0 ] && [ "${leaked:-1}" -eq 0 ]; then
+  printf '  \033[33mSKIP\033[0m  vim.loader cached nothing this run loaded, so nothing could have leaked\n'
+else
+  assert "the lua this run loaded was compiled into the scratch cache" [ "${ours:-0}" -ge 1 ]
+  assert "and none of it into the real one, where nothing prunes it" [ "${leaked:-1}" -eq 0 ]
+fi
 
 finish
