@@ -84,6 +84,21 @@ vim.opt.scrolloff = 12
 vim.opt.hlsearch = true
 vim.opt.incsearch = true
 
+-- Search ignores case unless the pattern has a capital in it.
+--
+-- That is the rule Telescope's grep already follows (telescope.lua passes rg
+-- --smart-case), so / and <leader>fg now agree on what a word matches. In a
+-- buffer holding "Alpha alpha ALPHA" and "alpha", /alpha finds 4 where it found
+-- 2, and /Alpha still finds only the 1. smartcase needs ignorecase: it acts
+-- only while ignorecase is on, so neither line does the job alone.
+--
+-- The cost: * and # ignore case too, because smartcase never applies to them,
+-- so * on that "alpha" finds 4 as well. <leader>s is unaffected: its :s ends in
+-- the I flag, which keeps that substitution case-sensitive whatever these say.
+-- checks/repo.sh reads both lines, and rejects a later write that changes one.
+vim.opt.ignorecase = true
+vim.opt.smartcase = true
+
 -- Splits open to the right/below (feels more natural)
 vim.opt.splitright = true
 vim.opt.splitbelow = true

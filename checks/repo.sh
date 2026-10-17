@@ -357,6 +357,35 @@ else
   ok "nvim uses the system clipboard (clipboard=unnamedplus) and nothing in the lua config changes it"
 fi
 
+# Search ignores case unless the pattern has a capital, the way Telescope's
+# grep does.
+#
+# Without it / is case-sensitive while <leader>fg, which runs rg --smart-case,
+# is not, so the same word typed into each finds different lines. smartcase
+# does nothing unless ignorecase is on, so the pair is one assertion. Same two
+# halves as the options above: the values in options.lua, and any later write
+# anywhere under nvim/.config/nvim, in lua or as a :set, under the long names
+# or ic and scs. A lua write of true is allowed, trailing comment or not; any
+# other write is reported, which errs loud.
+ignorecase="$(nvim_opt ignorecase)"
+smartcase="$(nvim_opt smartcase)"
+othercase="$(grep -rInE "vim\.(opt|o|go|opt_global|opt_local)\.(ignorecase|smartcase|ic|scs)[[:space:]]*(=|:)|(set|setglobal|setlocal)[[:space:](\"']+(no|inv)?(ignorecase|smartcase|ic|scs)([^[:alnum:]_]|$)" \
+  nvim/.config/nvim --include='*.lua' |
+  grep -vE '^[^:]*:[0-9]+:[[:space:]]*--' |
+  grep -vE '\.(ignorecase|smartcase)[[:space:]]*=[[:space:]]*true[[:space:]]*(--.*)?$')"
+if [ -z "$ignorecase" ] || [ -z "$smartcase" ]; then
+  bad "could not read vim.opt.ignorecase and vim.opt.smartcase out of $OPTIONS — the comparison would be vacuous"
+elif [ "$ignorecase" != "true" ]; then
+  bad "$OPTIONS sets ignorecase = $ignorecase, so / is case-sensitive while Telescope's grep is smart-case"
+elif [ "$smartcase" != "true" ]; then
+  bad "$OPTIONS sets smartcase = $smartcase, so a capital in a / pattern no longer makes the search exact"
+elif [ -n "$othercase" ]; then
+  bad "options.lua sets ignorecase and smartcase, and the lua config changes them again — the later write wins:"
+  printf '%s\n' "$othercase" | sed 's/^/      /'
+else
+  ok "search ignores case unless the pattern has a capital (ignorecase, smartcase), as Telescope's grep does, and nothing in the lua config changes that"
+fi
+
 # Every language server Mason installs is one lsp.lua starts, and the reverse.
 #
 # They are two lists in lsp.lua with nothing holding them together. A server

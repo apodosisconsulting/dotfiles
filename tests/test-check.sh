@@ -386,6 +386,25 @@ mutate "the clipboard changed again elsewhere in the lua config is caught" "nvim
 mutate "an unreadable clipboard setting fails rather than passing vacuously" "nvim uses the system clipboard" \
   sed -i '' '/^vim\.opt\.clipboard/d' nvim/.config/nvim/lua/rich/options.lua
 
+# The defect this exists for, on each half of the pair: / case-sensitive again,
+# or ignoring case even when the pattern has a capital.
+mutate "a case-sensitive search is caught" "search ignores case unless the pattern has a capital" \
+  sed -i '' 's/^vim\.opt\.ignorecase = true$/vim.opt.ignorecase = false/' nvim/.config/nvim/lua/rich/options.lua
+
+mutate "a search that ignores even a capital is caught" "search ignores case unless the pattern has a capital" \
+  sed -i '' 's/^vim\.opt\.smartcase = true$/vim.opt.smartcase = false/' nvim/.config/nvim/lua/rich/options.lua
+
+# Last write wins, as with the options above: in lua, and as a :set under the
+# short name.
+mutate "ignorecase turned off again elsewhere in the lua config is caught" "search ignores case unless the pattern has a capital" \
+  bash -c 'printf "\nvim.o.ignorecase = false\n" >> nvim/.config/nvim/lua/rich/keymaps.lua'
+
+mutate "smartcase turned off by a :set noscs elsewhere is caught" "search ignores case unless the pattern has a capital" \
+  bash -c 'printf "\nvim.cmd(\"set noscs\")\n" >> nvim/.config/nvim/lua/rich/keymaps.lua'
+
+mutate "an unreadable smartcase setting fails rather than passing vacuously" "search ignores case unless the pattern has a capital" \
+  sed -i '' '/^vim\.opt\.smartcase/d' nvim/.config/nvim/lua/rich/options.lua
+
 # A server started and never installed: here it works, on a new machine it
 # never attaches. Only the ensure_installed copy of the name goes.
 mutate "a language server lsp.lua starts but Mason never installs is caught" "Mason installs every language server" \
