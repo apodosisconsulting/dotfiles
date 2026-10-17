@@ -34,10 +34,12 @@ install_homebrew_macos() {
     die "brew installed but not found in expected locations"
   fi
 
+  # For the rest of this run only. Nothing is written to ~/.zprofile any more:
+  # .zshrc sets Homebrew's environment itself in every interactive shell, and
+  # tmux.conf sets PATH for run-shell. The eval this appended there ran brew
+  # again in every login shell, and every tmux pane is one; its whole-line
+  # check also missed an eval already there inside an if, and appended another.
   eval "$("$brew_path" shellenv)" || die "Failed to initialize Homebrew environment"
-  log "Persisting brew shellenv into $HOME/.zprofile (safe, idempotent)"
-  local line="eval \"\$(${brew_path} shellenv)\""
-  grep -Fqx "$line" "$HOME/.zprofile" 2>/dev/null || echo "$line" >>"$HOME/.zprofile"
 }
 
 brew_install_pkgs() {

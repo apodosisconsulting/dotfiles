@@ -110,6 +110,38 @@ assert "it says so" contains "$out" "already installed"
 refute "and does not fetch the installer" called "curl"
 
 echo
+echo "== a fresh Homebrew install writes nothing to ~/.zprofile =="
+# It appended `eval "$(brew shellenv)"` there, which ran brew again in every
+# login shell, and every tmux pane is one; .zshrc already sets the same
+# environment for interactive shells. The installer is the curl stub, which
+# prints nothing for bash to run. What it would have installed is looked for at
+# the two fixed prefixes, so a machine with neither cannot get past them.
+brew_at=""
+for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+  if [ -x "$b" ]; then
+    brew_at="$b"
+    break
+  fi
+done
+if [ -z "$brew_at" ]; then
+  printf '  \033[33mSKIP\033[0m  %s\n' "no brew at either prefix, so install_homebrew_macos stops before the step this tests"
+else
+  reset_stubs
+  rm -f "$STUB/brew" # absent from PATH, so the install branch runs
+  out="$(
+    PATH="$STUB:/usr/bin:/bin" HOME="$FAKE_HOME" bash -c "
+      source '$BOOT'
+      install_homebrew_macos
+      echo \"PREFIX=\${HOMEBREW_PREFIX:-unset}\"
+    " 2>&1
+  )"
+  assert "with no brew on PATH it fetches the installer (guards a vacuous test)" called "curl"
+  assert "...and the rest of the run has Homebrew's environment" \
+    contains "$out" "PREFIX=${brew_at%/bin/brew}"
+  refute "...and nothing was written to ~/.zprofile" [ -e "$FAKE_HOME/.zprofile" ]
+fi
+
+echo
 echo "== packages: a failing cask warns rather than aborting =="
 # The distinction matters on a fresh machine: a cask that fails should not
 # prevent the dotfiles from being stowed, or you are left with nothing.
