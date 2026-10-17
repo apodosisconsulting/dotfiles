@@ -449,6 +449,35 @@ else
   ok "]q [q ]d [d take a count: all $navs_all cnext, cprev and vim.diagnostic.jump calls use v:count1"
 fi
 
+# gd, gD, gi and gr belong to the buffer a server attaches to, and gr does not
+# wait.
+#
+# As global lazy `keys` in lsp.lua they replaced Vim's own gd and gi in every
+# buffer with no language server, where all they did was say the method was
+# not supported. And gr waited out timeoutlen on every press, because Neovim
+# 0.11 maps gra, gri, grn, grr and grt globally and a plain gr was a prefix of
+# them. lsp.lua sets the four in an LspAttach autocmd now, gr with nowait. So
+# none of them may be back in its keys table, and the gr map has to carry
+# nowait = true on its own line; a trailing comment cannot supply it.
+# tests/test-nvim.sh reads the maps a running nvim ends up with, in a buffer
+# with a server and in one without.
+lsp_keys="$(sed -n '/^    keys = {/,/^    },/p' "$LSP" | grep -vE '^[[:space:]]*--')"
+lsp_keys_g="$(printf '%s\n' "$lsp_keys" | grep -E '^[[:space:]]*\{[[:space:]]*"g[dDir]"')"
+lsp_gr="$(grep -vE '^[[:space:]]*--' "$LSP" | sed 's/[[:space:]]--.*$//' |
+  grep -E '"gr",[[:space:]]*vim\.lsp\.buf\.references')"
+if [ -z "$lsp_keys" ]; then
+  bad "could not read the keys table out of $LSP — whether gd, gD, gi and gr are global cannot be said"
+elif [ -n "$lsp_keys_g" ]; then
+  bad "$LSP declares gd, gD, gi or gr in its global lazy keys, replacing Vim's own in every buffer with no server:"
+  printf '%s\n' "$lsp_keys_g" | sed 's/^[[:space:]]*/      /'
+elif [ -z "$lsp_gr" ]; then
+  bad "found no gr map to vim.lsp.buf.references in $LSP — gr has moved, and whether it waits cannot be said"
+elif ! grep -qE 'nowait[[:space:]]*=[[:space:]]*true' <<<"$lsp_gr"; then
+  bad "$LSP maps gr without nowait = true, so every press waits out timeoutlen for Neovim's gra, gri, grn, grr and grt"
+else
+  ok "gd, gD, gi and gr are set per buffer when a server attaches, and gr does not wait for Neovim's gr* maps"
+fi
+
 section "tmux config"
 # terminal-features is a list, `set -sa` appends to it, and prefix S sources
 # the whole file again. With nothing resetting the list first, every reload

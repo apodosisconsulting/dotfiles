@@ -489,6 +489,69 @@ else
 fi
 
 echo
+echo "== gd, gD, gi and gr are the server's where there is one, Vim's where not =="
+# lsp.lua sets the four when a server attaches, for that buffer alone, and gr
+# with nowait: Neovim maps gra, gri, grn, grr and grt globally, so a gr that
+# waited would sit out timeoutlen on every press to see whether one of those
+# was being typed. checks/repo.sh reads lsp.lua; this reads the maps a running
+# nvim ends up with, every plugin included.
+#
+# A mapping that STARTS with gd, gD or gi would make that key wait in the same
+# way, so none may exist, in the buffer or globally. gr's own prefixes are the
+# five above, which its nowait outruns.
+cat >"$SANDBOX/gkeys_probe.lua" <<'LUA'
+local out = {}
+local function m(lhs)
+  return vim.fn.maparg(lhs, "n", false, true)
+end
+vim.wait(20000, function() return #vim.lsp.get_clients({ bufnr = 0 }) > 0 end, 100)
+out[#out + 1] = "GK_CLIENTS=" .. #vim.lsp.get_clients({ bufnr = 0 })
+for _, k in ipairs({ "gd", "gD", "gi", "gr" }) do
+  local x = m(k)
+  out[#out + 1] = string.format("GK_%s=%s,%s,%s", k, tostring(x.buffer), tostring(x.nowait),
+    (x.desc or "none"):gsub(" ", "_"))
+end
+local longer = {}
+for _, map in ipairs(vim.list_extend(vim.api.nvim_get_keymap("n"), vim.api.nvim_buf_get_keymap(0, "n"))) do
+  if #map.lhs > 2 and vim.tbl_contains({ "gd", "gD", "gi" }, map.lhs:sub(1, 2)) then
+    longer[#longer + 1] = map.lhs
+  end
+end
+out[#out + 1] = "GK_LONGER=[" .. table.concat(longer, ",") .. "]"
+print(table.concat(out, " "))
+LUA
+if [ -x "$HOME/.local/share/nvim/mason/bin/lua-language-server" ]; then
+  out="$(nv "$SANDBOX/start.lua" "luafile $SANDBOX/gkeys_probe.lua")"
+  assert "lua_ls attached to the buffer the maps are read in (guards a vacuous pass)" \
+    contains "$out" "GK_CLIENTS=1"
+  assert "gd goes to the definition, in that buffer alone" contains "$out" "GK_gd=1,0,Go_to_definition"
+  assert "gD goes to the type definition, in that buffer alone" \
+    contains "$out" "GK_gD=1,0,Go_to_type_definition"
+  assert "gi goes to the implementation, in that buffer alone" \
+    contains "$out" "GK_gi=1,0,Go_to_implementation"
+  assert "gr lists references, in that buffer alone, without waiting for gr*" \
+    contains "$out" "GK_gr=1,1,References"
+  assert "no mapping starts with gd, gD or gi, so none of them waits either" \
+    contains "$out" "GK_LONGER=[]"
+else
+  printf '  \033[33mSKIP\033[0m  lua-language-server is not installed via mason, so no buffer has a server\n'
+fi
+# Markdown has no server here. Vim's gi inserts where insert last stopped, and
+# its gd goes to the first use of the word under the cursor; both are typed, so
+# a map of any kind in their place fails, and so does a probe that typed
+# nothing.
+printf 'foo\ntwo\nthree foo\n' >"$SANDBOX/gkeys.md"
+out="$(nv "$SANDBOX/gkeys.md" \
+  'lua vim.wait(1500)' \
+  'lua local e = {} for _, k in ipairs({ "gd", "gD", "gi", "gr" }) do if vim.tbl_isempty(vim.fn.maparg(k, "n", false, true)) then e[#e + 1] = k end end print("GK_UNMAPPED=" .. table.concat(e, ",") .. " GK_MD_CLIENTS=" .. #vim.lsp.get_clients({ bufnr = 0 }))' \
+  'lua vim.api.nvim_win_set_cursor(0, { 3, 6 }) vim.api.nvim_feedkeys(vim.keycode("gd"), "x", false) print("GK_GD_LINE=" .. vim.fn.line("."))' \
+  'lua vim.api.nvim_feedkeys(vim.keycode("3GA!<Esc>gggiX<Esc>"), "x", false) print("GK_GI_LINE3=" .. vim.fn.getline(3))')"
+assert "the markdown buffer has no server (guards a vacuous pass)" contains "$out" "GK_MD_CLIENTS=0"
+assert "...and none of gd, gD, gi or gr is mapped there" contains "$out" "GK_UNMAPPED=gd,gD,gi,gr"
+assert "Vim's own gd goes to the first use of the word" contains "$out" "GK_GD_LINE=1"
+assert "Vim's own gi inserts where insert last stopped" contains "$out" "GK_GI_LINE3=three foo!X"
+
+echo
 echo "== only lsp.lua's enable list starts a language server =="
 # checks/repo.sh reads automatic_enable = false out of lsp.lua. This asks a
 # running nvim, once every plugin has had its turn, which servers are enabled,

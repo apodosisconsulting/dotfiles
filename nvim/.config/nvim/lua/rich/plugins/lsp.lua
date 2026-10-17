@@ -38,10 +38,9 @@ return {
 
         { "<leader>rn", vim.lsp.buf.rename, desc = "Rename symbol" },
         { "<leader>ca", vim.lsp.buf.code_action, desc = "Code action", mode = { "n", "v" } },
-        { "gd", vim.lsp.buf.definition, desc = "Go to definition" },
-        { "gD", vim.lsp.buf.type_definition, desc = "Go to type definition" },
-        { "gi", vim.lsp.buf.implementation, desc = "Go to implementation" },
-        { "gr", vim.lsp.buf.references, desc = "References" },
+        -- No gd, gD, gi or gr here either: config() sets them per buffer, when
+        -- a server attaches, and says why.
+        --
         -- No "K" here on purpose. Neovim 0.11 already maps K to hover, but
         -- buffer-locally and only `if maparg('K', 'n') == ''` — so declaring K
         -- in this table created a GLOBAL mapping that both defeated that guard
@@ -54,6 +53,33 @@ return {
 
     config = function()
         local capabilities = require("cmp_nvim_lsp").default_capabilities()
+
+        -- gd, gD, gi and gr belong to the buffer a server attaches to, for the
+        -- reason K is left to Neovim in `keys` above. As global `keys` they
+        -- replaced Vim's own gd (go to the local declaration) and gi (insert
+        -- where insert last stopped) in every buffer with no server, where all
+        -- they did was say the method was not supported.
+        --
+        -- nowait on gr, because Neovim 0.11 maps gra, gri, grn, grr and grt
+        -- globally: gr was a prefix of all five, so every press waited out
+        -- timeoutlen to see whether another key followed. In a server's buffer
+        -- it now hides those five, and each has a key of its own here:
+        -- <leader>ca, gi, <leader>rn, gr itself and gD. No mapping starts with
+        -- gd, gD or gi, so they need no nowait; tests/test-nvim.sh asserts
+        -- both.
+        vim.api.nvim_create_autocmd("LspAttach", {
+            group = vim.api.nvim_create_augroup("rich-lsp-keys", { clear = true }),
+            callback = function(ev)
+                local function map(lhs, rhs, opts)
+                    opts.buffer = ev.buf
+                    vim.keymap.set("n", lhs, rhs, opts)
+                end
+                map("gd", vim.lsp.buf.definition, { desc = "Go to definition" })
+                map("gD", vim.lsp.buf.type_definition, { desc = "Go to type definition" })
+                map("gi", vim.lsp.buf.implementation, { desc = "Go to implementation" })
+                map("gr", vim.lsp.buf.references, { desc = "References", nowait = true })
+            end,
+        })
 
         -- Mason auto-installs these servers on first run. They are the names
         -- vim.lsp.enable starts at the bottom of this function, bar

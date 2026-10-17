@@ -433,6 +433,21 @@ mutate "a count named only in a trailing comment is caught" "take a count" \
 mutate "no diagnostic jump to read fails rather than passing vacuously" "take a count" \
   sed -i '' 's/vim\.diagnostic\.jump(/vim.diagnostic.goto(/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
 
+# The defect this exists for: gr back among lsp.lua's global keys.
+mutate "a global gr in lsp.lua's keys is caught" "set per buffer when a server attaches" \
+  sed -i '' 's/^\(        \){ "<leader>rn", vim\.lsp\.buf\.rename, desc = "Rename symbol" },$/&\
+\1{ "gr", vim.lsp.buf.references, desc = "References" },/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
+
+mutate "a gr that waits for Neovim's gr* maps is caught" "set per buffer when a server attaches" \
+  sed -i '' 's/{ desc = "References", nowait = true }/{ desc = "References" }/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
+
+# A trailing comment is not code, and must not lend the line its nowait.
+mutate "a nowait named only in a trailing comment is caught" "set per buffer when a server attaches" \
+  sed -i '' 's/{ desc = "References", nowait = true })/{ desc = "References" }) -- nowait = true/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
+
+mutate "no gr map to read fails rather than passing vacuously" "set per buffer when a server attaches" \
+  sed -i '' 's/map("gr", vim\.lsp\.buf\.references,/map("gR", vim.lsp.buf.references,/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
+
 mutate_machine "a tmux.conf path that does not exist is caught" "every path the configs hardcode" \
   sed -i '' 's|~/.local/bin/tmux-clear-scrollback|~/.local/bin/does-not-exist|' tmux/.config/tmux/tmux.conf
 
