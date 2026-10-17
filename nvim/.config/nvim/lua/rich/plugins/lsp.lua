@@ -136,27 +136,27 @@ return {
         }
 
         -- A root_dir for a server that needs one in a folder of loose files,
-        -- where none of lspconfig's markers for it are found: the file's own
-        -- folder. pyright needs it, for the reason given there.
+        -- where lspconfig's own rule for it finds none: the file's own folder.
+        -- pyright and gopls need it, for the reasons given at each.
         local function marker_or_own_folder(server)
-            return function(bufnr, on_dir)
-                -- Read off the merged config rather than copied here, so the
-                -- list stays lspconfig's across a :Lazy update.
-                local root = vim.fs.root(bufnr, vim.lsp.config[server].root_markers)
-                if root then
-                    on_dir(root)
-                    return
-                end
+            -- lspconfig's rule is read off its config rather than copied here,
+            -- so it stays lspconfig's across a :Lazy update: a root_dir
+            -- function where it has one (gopls's looks for go.work, then
+            -- go.mod, then .git), its root_markers where not (pyright's). Read
+            -- now, before the config this goes into replaces the function.
+            local rule = vim.lsp.config[server].root_dir
+            local markers = vim.lsp.config[server].root_markers
 
+            local function own_folder(bufnr, on_dir)
                 -- Never ~ or /: the server indexes everything under its root.
                 -- An unnamed buffer, or a folder that does not exist yet, has no
                 -- realpath and no root either. on_dir(nil) hands the choice back
-                -- to vim.lsp.start, which looks for the markers itself, finds
-                -- none, and runs the server without a root, as before. Not
-                -- calling on_dir at all would leave the buffer with no server.
-                -- realpath on both sides, because nvim resolves symlinks in
-                -- buffer names on macOS and $HOME need be neither resolved nor
-                -- slash-free.
+                -- to vim.lsp.start, which looks for the markers itself, if the
+                -- server has any, finds none, and runs the server without a
+                -- root, as before. Not calling on_dir at all would leave the
+                -- buffer with no server. realpath on both sides, because nvim
+                -- resolves symlinks in buffer names on macOS and $HOME need be
+                -- neither resolved nor slash-free.
                 local name = vim.api.nvim_buf_get_name(bufnr)
                 local dir = name ~= "" and vim.fs.dirname(name) or nil
                 local real = dir and vim.uv.fs_realpath(dir)
@@ -165,6 +165,25 @@ return {
                     return
                 end
                 on_dir(dir)
+            end
+
+            return function(bufnr, on_dir)
+                if type(rule) == "function" then
+                    rule(bufnr, function(root)
+                        if root then
+                            on_dir(root)
+                        else
+                            own_folder(bufnr, on_dir)
+                        end
+                    end)
+                    return
+                end
+                local root = markers and vim.fs.root(bufnr, markers)
+                if root then
+                    on_dir(root)
+                    return
+                end
+                own_folder(bufnr, on_dir)
             end
         end
 
@@ -268,7 +287,22 @@ return {
 
         vim.lsp.config.jsonls = { capabilities = capabilities }
         vim.lsp.config.clangd = { capabilities = capabilities }
-        vim.lsp.config.gopls = { capabilities = capabilities }
+
+        -- gopls. tests/test-nvim.sh exercises it against a running gopls,
+        -- through tests/helpers/go-lsp-probe.lua.
+        vim.lsp.config.gopls = {
+            capabilities = capabilities,
+
+            -- lspconfig roots gopls at the nearest go.work, go.mod or .git, and
+            -- a folder of loose .go files, which is how a first program or an
+            -- exercise starts, has none of them. gopls still ran, with no root
+            -- and so no workspace folder, which meant no file watching, as
+            -- with pyright above: a file that already sat beside the open one
+            -- resolved, but a call into a later.go written beside it after it
+            -- was opened stayed "undefined: later" for the 15s it was watched.
+            -- With the file's own folder as the root, it resolved.
+            root_dir = marker_or_own_folder("gopls"),
+        }
 
         -- yamlls: schema validation for docker-compose, k8s, CI configs, etc.
         vim.lsp.config.yamlls = {

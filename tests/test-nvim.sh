@@ -693,6 +693,49 @@ if ! contains "$out" "WEB_PROBE_DONE=true"; then
 fi
 
 echo
+echo "== Go gets a working gopls, in a module and in a folder of loose files =="
+# tests/helpers/go-lsp-probe.lua builds a module, a folder of loose .go files
+# with no go.mod, and a .go directly in HOME, and prints KEY=value lines.
+#
+# The loose folder is asked about a file created AFTER main.go was opened, for
+# the reason the pyright section gives: one that already exists resolves with
+# no root at all (the probe checks that too), so only a file that appears
+# afterwards shows whether gopls has a workspace folder to watch.
+#
+# Not nv(), for the reasons given at the pyright probe above.
+out="$(TMPDIR="$TEST_TMP" PATH="$CLIP_BIN:$PATH" XDG_STATE_HOME="$STATE" XDG_CACHE_HOME="$CACHE" \
+  nvim --headless -c "luafile $REPO_ROOT/tests/helpers/go-lsp-probe.lua" 2>&1)"
+if contains "$out" "GO=SKIP_NO_GO"; then
+  printf '  \033[33mSKIP\033[0m  gopls is installed but there is no go command for it to run\n'
+elif contains "$out" "GO=SKIP"; then
+  printf '  \033[33mSKIP\033[0m  gopls is not installed via mason\n'
+elif contains "$out" "GO_NO_MARKER_ABOVE=false"; then
+  printf '  \033[33mSKIP\033[0m  a go.work, go.mod or .git sits above %s, so the loose-folder case cannot be set up\n' "$TEST_TMP"
+else
+  assert "gopls attaches to a .go file in a module" contains "$out" "GO_MOD_ATTACHED=true"
+  assert "...rooted at the module" contains "$out" "GO_MOD_ROOT_IS_MODULE=true"
+  assert "...completes a standard library member, strings.ToUpper" contains "$out" "GO_MOD_COMPLETES_STDLIB=true"
+  assert "...and reports the compiler's unused-variable error" contains "$out" "GO_MOD_DIAGNOSES=true"
+  assert "gopls attaches in a folder of loose .go files with no go.mod" contains "$out" "GO_LOOSE_ATTACHED=true"
+  assert "...rooted at that folder" contains "$out" "GO_LOOSE_ROOT_IS_FILE_DIR=true"
+  assert "...flags a call to a function no file defines yet (guards a vacuous pass)" \
+    contains "$out" "GO_LOOSE_FLAGS_MISSING_BEFORE=true"
+  assert "...while one in a file already beside it resolves" contains "$out" "GO_LOOSE_SEES_EXISTING_SIBLING=true"
+  assert "...and the call resolves once a file defining it appears beside it" \
+    contains "$out" "GO_LOOSE_RESOLVES_AFTER_CREATE=true"
+  printf '    resolved %sms after the file appeared\n' \
+    "$(printf '%s' "$out" | sed -n 's/^GO_LOOSE_RESOLVE_MS=\([0-9]*\).*/\1/p' | head -1)"
+  assert "a .go directly in HOME still gets gopls" contains "$out" "GO_HOME_ATTACHED=true"
+  assert "...but no root, so gopls does not load the whole home directory" \
+    contains "$out" "GO_HOME_STAYS_ROOTLESS=true"
+fi
+# The tokens vanish as a set when the probe dies; say what nvim said instead.
+if ! contains "$out" "GO_PROBE_DONE=true"; then
+  no "the Go language server probe did not run to the end"
+  printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300)"
+fi
+
+echo
 echo "== format-on-save actually reformats =="
 # conform is configured per filetype. A formatter named for a filetype whose
 # binary is missing makes format-on-save a silent no-op for that filetype, which
