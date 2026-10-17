@@ -59,9 +59,20 @@ return {
         -- vim.lsp.enable starts at the bottom of this function, bar
         -- rust_analyzer, which comes from rustup. checks/repo.sh holds the two
         -- lists together: a server enabled but never installed just never
-        -- attaches on a new machine, and one installed but never enabled runs
-        -- only while mason-lspconfig's automatic_enable happens to be on.
+        -- attaches on a new machine, and one installed but never enabled is
+        -- downloaded on every machine and never runs.
+        --
+        -- It never runs because automatic_enable is off, which makes that
+        -- enable list the one thing that starts a server. mason-lspconfig
+        -- defaults it to on, and then calls vim.lsp.enable for every server
+        -- Mason has installed: one added from :Mason, or left behind by an old
+        -- ensure_installed, started in every buffer of its filetypes with
+        -- nothing here naming it. A copy of this config with cssls taken out
+        -- of the enable list still enabled cssls, because Mason had css-lsp;
+        -- with this off, it did not. Off also skips the config overrides
+        -- mason-lspconfig ships for some servers, none of them one used here.
         require("mason-lspconfig").setup({
+            automatic_enable = false,
             ensure_installed = {
                 "gopls",
                 "lua_ls",

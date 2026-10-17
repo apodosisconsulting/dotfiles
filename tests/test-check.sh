@@ -391,7 +391,7 @@ mutate "an unreadable clipboard setting fails rather than passing vacuously" "nv
 mutate "a language server lsp.lua starts but Mason never installs is caught" "Mason installs every language server" \
   sed -i '' '/ensure_installed = {/,/}/{/"eslint",/d;}' nvim/.config/nvim/lua/rich/plugins/lsp.lua
 
-# The reverse: installed, and running only because automatic_enable is on.
+# The reverse: installed everywhere, and with automatic_enable off, never run.
 mutate "a language server Mason installs but lsp.lua never starts is caught" "Mason installs every language server" \
   sed -i '' '/vim\.lsp\.enable({/,/})/{/"cssls",/d;}' nvim/.config/nvim/lua/rich/plugins/lsp.lua
 
@@ -401,6 +401,22 @@ mutate "a second vim.lsp.enable call elsewhere in the lua config is caught" "Mas
 
 mutate "an unreadable server list fails rather than passing vacuously" "Mason installs every language server" \
   sed -i '' 's/ensure_installed = {/ensure_installed_ = {/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
+
+# The defect this exists for: the key left out, so mason-lspconfig's default
+# starts every server Mason has installed.
+mutate "automatic_enable left to its default is caught" "only lsp.lua's enable list starts" \
+  sed -i '' '/^[[:space:]]*automatic_enable = false,$/d' nvim/.config/nvim/lua/rich/plugins/lsp.lua
+
+# A table turns it on for the servers it names.
+mutate "automatic_enable set to anything but false is caught" "only lsp.lua's enable list starts" \
+  sed -i '' 's/automatic_enable = false,/automatic_enable = { "cssls" },/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
+
+# Last write wins: mason-lspconfig merges every setup() call into one.
+mutate "automatic_enable turned back on elsewhere in the lua config is caught" "only lsp.lua's enable list starts" \
+  bash -c 'printf "\nrequire(\"mason-lspconfig\").setup({ automatic_enable = true })\n" >> nvim/.config/nvim/lua/rich/keymaps.lua'
+
+mutate "an unreadable mason-lspconfig setup fails rather than passing vacuously" "only lsp.lua's enable list starts" \
+  sed -i '' 's/require("mason-lspconfig").setup({/require("mason-lspconfig").setup_({/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
 
 # The defect this exists for, replayed on each half: ]q back to a bare cnext,
 # and ]d back to a hard-coded count of one.

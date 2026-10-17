@@ -489,6 +489,31 @@ else
 fi
 
 echo
+echo "== only lsp.lua's enable list starts a language server =="
+# checks/repo.sh reads automatic_enable = false out of lsp.lua. This asks a
+# running nvim, once every plugin has had its turn, which servers are enabled,
+# and requires exactly the names in lsp.lua's vim.lsp.enable list. While
+# automatic_enable was on, mason-lspconfig also enabled every server Mason had
+# installed, so a server taken out of that list went on starting.
+#
+# Asked of every lsp/*.lua config on the runtime path, which is where
+# lspconfig's live. A .txt is opened so lspconfig loads and no server starts.
+# LC_ALL=C because lua sorts by byte, and a locale's sort can skip the _.
+lsp_listed="$(sed -n '/vim\.lsp\.enable({/,/})/p' "$NVIM_CONFIG/lua/rich/plugins/lsp.lua" |
+  grep -vE '^[[:space:]]*--' | grep -oE '"[a-z_]+"' | tr -d '"' | LC_ALL=C sort -u | paste -sd, -)"
+: >"$SANDBOX/enabled.txt"
+out="$(nv "$SANDBOX/enabled.txt" \
+  'lua local n = {} for _, f in ipairs(vim.api.nvim_get_runtime_file("lsp/*.lua", true)) do local s = vim.fn.fnamemodify(f, ":t:r") if vim.lsp.is_enabled(s) then n[s] = true end end n = vim.tbl_keys(n) table.sort(n) print("LSP_ENABLED=" .. table.concat(n, ","))')"
+lsp_enabled_now="$(printf '%s' "$out" | tr -d '\r' | grep -o 'LSP_ENABLED=[^[:space:]]*' | head -1 | sed 's/^LSP_ENABLED=//')"
+printf '    lsp.lua lists %s\n    nvim enabled  %s\n' "${lsp_listed:-nothing}" "${lsp_enabled_now:-nothing}"
+if [ -z "$lsp_listed" ] || [ -z "$lsp_enabled_now" ]; then
+  no "could not read lsp.lua's enable list or nvim's enabled servers — the comparison would be vacuous"
+else
+  assert "nvim enables exactly the servers lsp.lua lists, and none Mason merely has" \
+    [ "$lsp_enabled_now" = "$lsp_listed" ]
+fi
+
+echo
 echo "== pyright resolves what a folder of loose scripts imports =="
 # lsp.lua gives pyright two things lspconfig does not: the file's own folder as
 # its root where no project marker is found, and the folder's .venv when no venv

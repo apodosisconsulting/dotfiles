@@ -362,10 +362,11 @@ fi
 # They are two lists in lsp.lua with nothing holding them together. A server
 # added to vim.lsp.enable and not to ensure_installed works on this machine,
 # where Mason already has it, and on a new one never attaches. A server added
-# only to ensure_installed runs because mason-lspconfig's automatic_enable
-# starts whatever Mason has installed, and stops the day that is turned off.
-# Neither says so: the buffer just has no language server. rust_analyzer may
-# be on the enable side alone, because it comes from rustup, not Mason.
+# only to ensure_installed is downloaded on every machine and never runs:
+# automatic_enable is off (asserted below), so nothing but the enable list
+# starts one. Neither says so: the buffer just has no language server.
+# rust_analyzer may be on the enable side alone, because it comes from rustup,
+# not Mason.
 #
 # One vim.lsp.enable call, too: lua's last write wins, so a second one anywhere
 # in the config -- vim.lsp.enable(name, false) turns a server off -- would make
@@ -383,11 +384,40 @@ if [ -z "$lsp_installed" ] || [ -z "$lsp_enabled" ]; then
 elif [ -n "$lsp_only_enabled" ]; then
   bad "$LSP starts $lsp_only_enabled but Mason never installs it, so on a new machine it never attaches"
 elif [ -n "$lsp_only_installed" ]; then
-  bad "Mason installs $lsp_only_installed but $LSP never starts it, so it runs only while automatic_enable is on"
+  bad "Mason installs $lsp_only_installed but $LSP never starts it, so it is downloaded on every machine and never runs"
 elif [ "${lsp_calls:-0}" -ne 1 ]; then
   bad "the nvim config calls vim.lsp.enable ${lsp_calls:-0} times, not once, so lsp.lua's list is not the whole story"
 else
   ok "Mason installs every language server lsp.lua starts, and lsp.lua starts all $(printf '%s\n' "$lsp_installed" | grep -c .) it installs"
+fi
+
+# Nothing but that enable list starts a server: mason-lspconfig's
+# automatic_enable is off, and nothing turns it back on.
+#
+# mason-lspconfig defaults it to on, and then runs vim.lsp.enable for every
+# server Mason has installed, so the list compared above was not the whole
+# story: a server installed from :Mason started with nothing here naming it.
+# Its settings are merged across setup() calls, so the last value written is
+# the one used, and a second assignment anywhere in the config -- another
+# setup() call, a lazy opts table -- could be that one. So there must be
+# exactly one, inside lsp.lua's setup() call, and it must be false: a table is
+# mason-lspconfig's way of turning it on for some servers. tests/test-nvim.sh
+# asks a running nvim which servers are enabled.
+mlc_block="$(sed -n '/require("mason-lspconfig")\.setup({/,/^[[:space:]]*})/p' "$LSP" | grep -vE '^[[:space:]]*--')"
+mlc_value="$(printf '%s\n' "$mlc_block" |
+  sed -n 's/^[[:space:]]*automatic_enable[[:space:]]*=[[:space:]]*\([^,[:space:]]*\).*/\1/p')"
+mlc_writes="$(grep -rnE 'automatic_enable[[:space:]]*=' nvim/.config/nvim --include='*.lua' |
+  grep -cvE '^[^:]*:[0-9]+:[[:space:]]*--')"
+if [ -z "$mlc_block" ]; then
+  bad "could not find require(\"mason-lspconfig\").setup({ in $LSP — whether automatic_enable is off cannot be said"
+elif [ -z "$mlc_value" ]; then
+  bad "$LSP's mason-lspconfig setup() leaves automatic_enable out, so it defaults to on and every server Mason has installed starts, listed or not"
+elif [ "$mlc_value" != false ]; then
+  bad "$LSP sets automatic_enable = $mlc_value, not false, so servers Mason has installed start whether or not lsp.lua lists them"
+elif [ "${mlc_writes:-0}" -ne 1 ]; then
+  bad "the nvim config sets automatic_enable ${mlc_writes:-0} times, not once — mason-lspconfig keeps the last value written, so lsp.lua's false may not be it"
+else
+  ok "mason-lspconfig's automatic_enable is false, so only lsp.lua's enable list starts a language server"
 fi
 
 # A count on ]q [q ]d [d.
