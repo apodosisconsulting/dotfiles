@@ -65,9 +65,32 @@ nvm() {
   [[ -s "$NVM_DIR/nvm.sh" ]] && . "$NVM_DIR/nvm.sh"
   nvm "$@"
 }
-node() { nvm use --silent >/dev/null 2>&1; unset -f node; command node "$@"; }
-npm()  { nvm use --silent >/dev/null 2>&1; unset -f npm;  command npm  "$@"; }
-npx()  { nvm use --silent >/dev/null 2>&1; unset -f npx;  command npx  "$@"; }
+# nvm's default node first on PATH from the start, found from its alias file
+# and a glob rather than by loading nvm.sh. Before, a shell ran Homebrew's node
+# until the first node, npm or npx typed in it, and nvm's after, so anything
+# that reaches node through PATH -- a global npm CLI, a language server nvim
+# starts -- got whichever was current. (n) sorts the matches numerically, so a
+# default of 20 picks v20.10.0 over v20.9.0; plain sorting picks v20.9.0.
+#
+# What that gives up: the wrappers ran a bare `nvm use`, which also applied a
+# .nvmrc in the directory of the first node typed. Now `nvm use` there does.
+#
+# A default that is not a version (lts/*, node, another alias) names no
+# directory, so it keeps the wrappers: they load nvm.sh, which resolves it, on
+# the first node, npm or npx.
+() {
+  local v=""
+  local -a d
+  [[ -r $NVM_DIR/alias/default ]] && read -r v <$NVM_DIR/alias/default
+  [[ -n $v ]] && d=($NVM_DIR/versions/node/v${v#v}(|.*)(Nn/))
+  if (( $#d )); then
+    path=($d[-1]/bin $path)
+  else
+    node() { nvm use --silent >/dev/null 2>&1; unset -f node; command node "$@"; }
+    npm()  { nvm use --silent >/dev/null 2>&1; unset -f npm;  command npm  "$@"; }
+    npx()  { nvm use --silent >/dev/null 2>&1; unset -f npx;  command npx  "$@"; }
+  fi
+}
 
 # -------------------------
 # Line editing: emacs keys, whatever $EDITOR says

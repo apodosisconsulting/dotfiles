@@ -231,6 +231,58 @@ in_rc() { # $1 = a HOME from rc_home, $2... = env assignments, then the command
 real_home="$(rc_home real <"$ZSHRC")"
 
 echo
+echo "== nvm's default node is first on PATH from the start =="
+# Before, a shell ran Homebrew's node until the first node, npm or npx typed in
+# it and nvm's after, so a CLI or a language server reaching node through PATH
+# got whichever was current. A fake nvm here: its alias file and three
+# versions, each node a stub printing its own version. The highest 20 is
+# v20.10.0, which sorts below v20.9.0 as text.
+nvm_home() { # $1 = a name, $2 = the default alias; stdin = the .zshrc
+  local h v
+  h="$(rc_home "$1")"
+  mkdir -p "$h/.nvm/alias"
+  printf '%s\n' "$2" >"$h/.nvm/alias/default"
+  for v in v20.9.0 v20.10.0 v22.1.0; do
+    mkdir -p "$h/.nvm/versions/node/$v/bin"
+    printf '#!/bin/sh\necho %s\n' "$v" >"$h/.nvm/versions/node/$v/bin/node"
+    chmod +x "$h/.nvm/versions/node/$v/bin/node"
+  done
+  printf '%s' "$h"
+}
+# Where node is, what kind of command it is, and what `env node` runs, as a
+# global CLI's shebang would.
+# shellcheck disable=SC2016  # zsh code, expanded by zsh
+probe_node='print -r -- "$(whence -p node) [$(whence -w node)] $(/usr/bin/env node --version 2>&1)"'
+node_in() { in_rc "$1" zsh -i -c "$probe_node" 2>/dev/null; }
+
+got="$(node_in "$(nvm_home nvm-20 20 <"$ZSHRC")")"
+assert "with a default of 20, node on PATH is nvm's v20.10.0, the highest 20" \
+  contains "$got" "/.nvm/versions/node/v20.10.0/bin/node ["
+assert "...run directly, not through a wrapper that loads nvm.sh first" \
+  contains "$got" "[node: command]"
+assert "...and env node, as a global CLI finds it, runs that one" \
+  [ "${got##* }" = "v20.10.0" ]
+
+got="$(node_in "$(nvm_home nvm-lts 'lts/*' <"$ZSHRC")")"
+assert "a default that is not a version keeps the wrapper, which lets nvm.sh resolve it" \
+  contains "$got" "[node: function]"
+refute "...and puts no nvm version on PATH itself" contains "$got" "/.nvm/versions/"
+
+# Inline negative controls. Without (n) the glob sorts as text and v20.9.0
+# comes last. And a copy that always takes the wrapper branch, as .zshrc did
+# for every default, leaves env node to whatever else is on PATH.
+lexical="$(sed 's|(Nn/)|(N/)|' "$ZSHRC" | nvm_home nvm-lexical 20)"
+refute "a copy of .zshrc without (n) really is different" cmp -s "$ZSHRC" "$lexical/.zshrc"
+assert "...and with a default of 20 it picks v20.9.0, so the version assertion can fail" \
+  contains "$(node_in "$lexical")" "/.nvm/versions/node/v20.9.0/bin/node ["
+wrappers="$(sed 's/^  if (( \$#d )); then$/  if false; then/' "$ZSHRC" | nvm_home nvm-wrappers 20)"
+refute "a copy of .zshrc that always defines the wrappers really is different" \
+  cmp -s "$ZSHRC" "$wrappers/.zshrc"
+got="$(node_in "$wrappers")"
+refute "...and in it env node does not run nvm's v20.10.0, so that assertion can fail" \
+  [ "${got##* }" = "v20.10.0" ]
+
+echo
 echo "== the keymap is emacs whether or not EDITOR was inherited =="
 # zle starts in vi insert mode when $EDITOR or $VISUAL mentions vi. .zshrc
 # exports EDITOR=nvim, so a shell started from a shell (exec zsh, a nested zsh,
