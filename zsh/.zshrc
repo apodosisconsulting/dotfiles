@@ -127,6 +127,14 @@ export LC_ALL="en_GB.UTF-8"
 # Rust toolchain
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 
+# Go: the bin dir `go install` writes to, after everything else on PATH. The
+# default GOPATH is spelled out rather than asked of `go env GOPATH`, which
+# forked go on every shell (about 7ms measured) and printed "command not found"
+# on a machine without go.
+if (( $+commands[go] )); then
+  path+=("${GOPATH:-$HOME/go}/bin")
+fi
+
 # -------------------------
 # History
 # -------------------------

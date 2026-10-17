@@ -904,6 +904,23 @@ if grep -q '(#q' zsh/.zshrc; then
   fi
 fi
 
+# The .zshrc.local block is the last thing .zshrc runs, because whatever runs
+# last sets the $? the first prompt shows. Anything appended after it -- an
+# installer's `[ -s file ] && source file` line is the usual shape, and envman's
+# went in here exactly that way -- leaves $? at 1 wherever its file is missing,
+# so starship draws its red error character before a single command has run.
+# Per-machine lines belong in ~/.zshrc.local itself. Comments and blank lines
+# after the block are fine; code is not.
+zshrc_tail="$(grep -vE '^[[:space:]]*(#|$)' zsh/.zshrc 2>/dev/null | tail -n 3 | paste -sd'|' -)"
+# shellcheck disable=SC2016  # $HOME is text to match in .zshrc, not expanded here
+if [ -z "$zshrc_tail" ]; then
+  bad "could not read the end of zsh/.zshrc — whether the .zshrc.local block is last cannot be said"
+elif [ "$zshrc_tail" != 'if [[ -f "$HOME/.zshrc.local" ]]; then|  source "$HOME/.zshrc.local"|fi' ]; then
+  bad ".zshrc runs code after its .zshrc.local block, so the first prompt can open on a failed status — put per-machine lines in ~/.zshrc.local"
+else
+  ok ".zshrc ends with its .zshrc.local block, so the first prompt opens on a clean status"
+fi
+
 # .zshrc writes out what `brew shellenv` prints rather than running it. Running
 # it cost a bash process on every shell, and it prints nothing at all when PATH
 # already starts with brew's bin and sbin, so a shell handed such a PATH never

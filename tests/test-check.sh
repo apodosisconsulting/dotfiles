@@ -448,6 +448,10 @@ mutate "a broken .zshrc is caught" ".zshrc parses" \
 
 # The defect this exists for: the per-shell eval coming back, and with it the
 # empty output that left HOMEBREW_PREFIX unset.
+# The defect this exists for: an installer's line appended after the block.
+mutate "code appended after the .zshrc.local block is caught" "ends with its .zshrc.local block" \
+  bash -c 'printf "\n[ -s /nope ] && :\n" >> zsh/.zshrc'
+
 # shellcheck disable=SC2016  # the $( ) is text appended to .zshrc, not run here
 mutate "brew shellenv run from .zshrc again is caught" "rather than running brew shellenv" \
   bash -c 'printf "\neval \"\$(/opt/homebrew/bin/brew shellenv)\"\n" >> zsh/.zshrc'
