@@ -295,6 +295,77 @@ out="$(printf '%s\n' "$typed" | in_rc "$no_comments" zsh -i 2>/dev/null)"
 assert "...and that copy passes the comment along as arguments, so the test can fail" \
   [ "$(printf '%s\n' "$out" | sed -n 1p)" = "a # b" ]
 
+# What Tab offers, read from a real zle on a pseudo-terminal: completion runs
+# nowhere else, so a `zsh -i -c` cannot see it. The recording is done by
+# ~/.zshrc.local, which .zshrc sources last, after compinit, fzf's Tab binding
+# and the plugins, so the candidates are the ones this .zshrc really offers.
+# compadd -O does the matching without adding anything, which is how each
+# candidate compadd ACCEPTS is written down rather than each one it is handed;
+# a call that only filters (-O, -A, -D of its own) is passed straight through.
+# The two markers are the driver's cue to type and to stop.
+COMPLETE="$REPO_ROOT/tests/helpers/zsh-complete.py"
+python_bin="$(command -v python3 2>/dev/null)"
+CAPTURE_RC="$TEST_TMP/capture.zsh"
+# shellcheck disable=SC2016  # zsh code, expanded by zsh
+printf '%s\n' \
+  'compadd() {' \
+  '  if [[ ${@[1,(i)(-|--)]} == *-(O|A|D)\ * ]]; then' \
+  '    builtin compadd "$@"' \
+  '    return' \
+  '  fi' \
+  '  local -a got' \
+  '  builtin compadd -O got "$@"' \
+  '  (( $#got )) && print -rl -- $got >>$CAPTURE' \
+  '  builtin compadd "$@"' \
+  '}' \
+  'capture_ready() { : >$CAPTURE.ready; }' \
+  'capture_done() { : >$CAPTURE.done; }' \
+  'precmd_functions+=(capture_ready)' \
+  'comppostfuncs+=(capture_done)' >"$CAPTURE_RC"
+# Cleared first: called in a $( ), so nothing it did last time is known here,
+# and markers left by an earlier call would end this one before Tab was read.
+complete_in() { # $1 = a HOME from rc_home, $2 = dir, $3 = line typed before Tab
+  local out="$1/offered"
+  rm -f "$out" "$out.ready" "$out.done"
+  cp "$CAPTURE_RC" "$1/.zshrc.local"
+  in_rc "$1" CAPTURE="$out" "$python_bin" "$COMPLETE" "$2" "$3" "$out" >/dev/null 2>&1
+  printf ' %s ' "$(sort -u "$out" 2>/dev/null | tr '\n' ' ')"
+}
+
+echo
+echo "== a * on the command line skips dotfiles, and Tab still offers them =="
+# `setopt globdots` made every glob in every shell match dotfiles, so `rm -rf *`
+# took .git and .env with it. .zshrc puts globdots on compinit's _comp_options
+# instead, which only completion runs under.
+DOTS="$TEST_TMP/dots"
+mkdir -p "$DOTS/.git" "$DOTS/src"
+: >"$DOTS/.env"
+: >"$DOTS/README"
+glob_in() { in_rc "$1" zsh -i -c "cd '$DOTS' && print -r -- *" 2>/dev/null; }
+assert "the scratch dir really holds a dotfile (guards a vacuous test)" [ -e "$DOTS/.env" ]
+assert "* expands to everything but the dotfiles" [ "$(glob_in "$real_home")" = "README src" ]
+set_dots="$(sed 's/^_comp_options+=(globdots)$/setopt globdots/' "$ZSHRC" | rc_home setopt-globdots)"
+refute "a copy of .zshrc with setopt globdots in its place really is different" \
+  cmp -s "$ZSHRC" "$set_dots/.zshrc"
+assert "...and in that copy * matches .env and .git, so the test can fail" \
+  [ "$(glob_in "$set_dots")" = ".env .git README src" ]
+
+if [ -z "$python_bin" ]; then
+  printf '  \033[33mSKIP\033[0m  %s\n' "no python3, so nothing can drive zle on a pseudo-terminal to press Tab"
+else
+  comp_home="$(rc_home complete <"$ZSHRC")"
+  offered="$(complete_in "$comp_home" "$DOTS" 'cat ')"
+  assert "Tab after 'cat ' offers the files (guards a vacuous capture)" \
+    contains "$offered" " README "
+  assert "...and the dotfiles too" contains "$offered" " .env "
+  no_comp_dots="$(sed '/^_comp_options+=(globdots)$/d' "$ZSHRC" | rc_home no-comp-dots)"
+  refute "a copy of .zshrc without the _comp_options line really is different" \
+    cmp -s "$ZSHRC" "$no_comp_dots/.zshrc"
+  offered="$(complete_in "$no_comp_dots" "$DOTS" 'cat ')"
+  assert "...where Tab still offers the files" contains "$offered" " README "
+  refute "...but not the dotfiles, so the test can fail" contains "$offered" " .env "
+fi
+
 echo
 echo "== no prompt runs a starship to draw an empty right prompt =="
 # starship's init sets RPROMPT to a second `starship prompt --right`, run before

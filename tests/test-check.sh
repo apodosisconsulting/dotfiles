@@ -481,6 +481,33 @@ mutate "interactive_comments unset again later is caught" "sets interactive_comm
 mutate "interactive_comments negated again later is caught" "sets interactive_comments" \
   bash -c 'printf "\nsetopt autocd no_interactivecomments\n" >> zsh/.zshrc'
 
+# The defect this exists for, replayed: setopt globdots back where the
+# _comp_options line is, so every * matches .git and .env again.
+mutate "setopt globdots back in .zshrc is caught" "leaves globdots off" \
+  sed -i '' 's/^_comp_options+=(globdots)$/setopt globdots/' zsh/.zshrc
+
+# In a spelling zsh also accepts, and by turning its negation off.
+mutate "globdots set as GLOB_DOTS among other options is caught" "leaves globdots off" \
+  bash -c 'printf "\nsetopt autocd GLOB_DOTS\n" >> zsh/.zshrc'
+
+mutate "globdots set by unsetting no_globdots is caught" "leaves globdots off" \
+  bash -c 'printf "\nunsetopt no_globdots\n" >> zsh/.zshrc'
+
+mutate "no globdots in _comp_options, so Tab hides dotfiles, is caught" "Tab still offers dotfiles" \
+  sed -i '' '/^_comp_options+=(globdots)$/d' zsh/.zshrc
+
+# Before compinit, which assigns the list afresh and throws the append away.
+mutate "globdots added to _comp_options before compinit is caught" "Tab still offers dotfiles" \
+  python3 -c 'p = "zsh/.zshrc"; s = open(p).read().split("\n")
+s.remove("_comp_options+=(globdots)"); s.insert(2, "_comp_options+=(globdots)"); open(p, "w").write("\n".join(s))'
+
+# Last write wins: a later plain assignment replaces the list with the append.
+mutate "_comp_options assigned again after the append is caught" "Tab still offers dotfiles" \
+  bash -c 'printf "\n_comp_options=(extendedglob)\n" >> zsh/.zshrc'
+
+mutate "no findable compinit fails the _comp_options order rather than passing vacuously" "Tab still offers dotfiles" \
+  sed -i '' 's/^\([[:space:]]*\)compinit/\1: compinit/' zsh/.zshrc
+
 # The defect this exists for: a starship forked before every prompt to draw an
 # empty right prompt.
 mutate "starship's RPROMPT left in place is caught" "clears RPROMPT after starship init" \

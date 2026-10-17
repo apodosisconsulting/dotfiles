@@ -112,7 +112,12 @@ autoload -Uz compinit
   fi
 }
 
-setopt globdots
+# Tab offers dotfiles; a * on the command line does not match them. globdots
+# goes on compinit's own option list, which every completion widget sets as
+# local options on entry and nothing else reads. `setopt globdots` here made
+# every glob in every shell match dotfiles, so `rm -rf *` and `mv * ..` took
+# .git and .env with them. After compinit, which sets the list afresh.
+_comp_options+=(globdots)
 
 # -------------------------
 # Environment

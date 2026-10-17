@@ -963,28 +963,64 @@ else
   ok ".zshrc pins the emacs keymap before compinit, whatever EDITOR a shell inherits"
 fi
 
-# Without interactive_comments, a command pasted from the README with its
-# trailing comment runs the comment as arguments. Read as zsh reads option
-# names -- any case, underscores ignored, "no" negates -- and the last setopt
-# or unsetopt that names it is the one that holds.
-comments="$(awk '
-  /^[[:space:]]*#/ { next }
-  $1 == "setopt" || $1 == "unsetopt" {
-    for (i = 2; i <= NF; i++) {
-      if ($i ~ /^#/) break
-      o = tolower($i); gsub(/_/, "", o)
-      on = ($1 == "setopt")
-      if (o ~ /^no/) { o = substr(o, 3); on = !on }
-      if (o == "interactivecomments") state = (on ? "on" : "off") ":" NR
+# The state the last setopt or unsetopt naming an option leaves it in, as
+# on:LINE or off:LINE, or nothing when no line names it. Read as zsh reads
+# option names: any case, underscores ignored, a "no" in front negates.
+zsh_opt_state() { # $1 = option name, lower case, no underscores
+  awk -v want="$1" '
+    /^[[:space:]]*#/ { next }
+    $1 == "setopt" || $1 == "unsetopt" {
+      for (i = 2; i <= NF; i++) {
+        if ($i ~ /^#/) break
+        o = tolower($i); gsub(/_/, "", o)
+        on = ($1 == "setopt")
+        if (o != want && o == "no" want) { o = want; on = !on }
+        if (o == want) state = (on ? "on" : "off") ":" NR
+      }
     }
-  }
-  END { print state }
-' zsh/.zshrc 2>/dev/null)"
+    END { print state }
+  ' zsh/.zshrc 2>/dev/null
+}
+
+# Without interactive_comments, a command pasted from the README with its
+# trailing comment runs the comment as arguments. The last setopt or unsetopt
+# that names it is the one that holds.
+comments="$(zsh_opt_state interactivecomments)"
 case "$comments" in
   on:*) ok ".zshrc sets interactive_comments, so a pasted command's trailing # comment stays a comment" ;;
   off:*) bad ".zshrc turns interactive_comments off again at line ${comments#*:} — a pasted # comment becomes arguments" ;;
   *) bad ".zshrc never sets interactive_comments — a pasted # comment becomes arguments" ;;
 esac
+
+# Dotfiles belong to completion, not to every glob. `setopt globdots` made each
+# * in every shell match them, so `rm -rf *` and `mv * ..` took .git and .env
+# along. compinit keeps its own option list, _comp_options, which completion
+# widgets set as local options and nothing else reads, so globdots goes there.
+# compinit assigns that list afresh, so the append has to come after the last
+# compinit call, and after any later plain assignment that would replace it.
+#
+# Nothing naming globdots reads as off, its default. The reader is the one the
+# interactive_comments check above uses, so a reader that has gone blind fails
+# there rather than passing here unnoticed.
+globdots="$(zsh_opt_state globdots)"
+case "$globdots" in
+  on:*) bad ".zshrc turns globdots on at line ${globdots#*:} — every * in every shell matches .git and .env" ;;
+  *) ok ".zshrc leaves globdots off, so a * on the command line does not match .git or .env" ;;
+esac
+comp_dots_at="$(grep -nE '^[[:space:]]*_comp_options\+=\([^)#]*globdots' zsh/.zshrc 2>/dev/null | tail -1 | cut -d: -f1)"
+comp_reset_at="$(grep -nE '^[[:space:]]*_comp_options=' zsh/.zshrc 2>/dev/null | tail -1 | cut -d: -f1)"
+compinit_last="$(grep -nE '^[[:space:]]*compinit([[:space:]]|$)' zsh/.zshrc 2>/dev/null | tail -1 | cut -d: -f1)"
+if [ -z "$compinit_last" ]; then
+  bad "could not find where .zshrc runs compinit — whether completion keeps globdots cannot be said"
+elif [ -z "$comp_dots_at" ]; then
+  bad ".zshrc never adds globdots to _comp_options — Tab stops offering dotfiles"
+elif [ "$comp_dots_at" -le "$compinit_last" ]; then
+  bad "_comp_options gains globdots at line $comp_dots_at, before compinit (line $compinit_last) sets the list afresh — Tab stops offering dotfiles"
+elif [ -n "$comp_reset_at" ] && [ "$comp_reset_at" -gt "$comp_dots_at" ]; then
+  bad "_comp_options is assigned again at line $comp_reset_at, after globdots was added — Tab stops offering dotfiles"
+else
+  ok "Tab still offers dotfiles: _comp_options gains globdots after compinit"
+fi
 
 # starship's init sets RPROMPT to a `starship prompt --right` run before every
 # prompt, and draws nothing with it unless starship.toml has a right_format.
