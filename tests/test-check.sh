@@ -266,6 +266,15 @@ mutate "a deprecated Neovim API is caught" "deprecated" \
 mutate "a plugin file with no lazy spec is caught" "lazy spec" \
   sed -i '' 's/^return {/local _unused = {/' nvim/.config/nvim/lua/rich/plugins/fidget.lua
 
+# The defect this exists for: 99 with no lazy trigger, which is how it loaded
+# at every start. Renamed rather than deleted so the file still parses, and the
+# only thing wrong is the one this assertion names.
+mutate "99 with no lazy keys, so loading at every start, is caught" "99 waits for its keys" \
+  sed -i '' 's/^    keys = {$/    _keys = {/' nvim/.config/nvim/lua/rich/plugins/99.lua
+
+mutate "99 keys overridden by lazy = false are caught" "99 waits for its keys" \
+  sed -i '' 's/^    config = function()$/    lazy = false, config = function()/' nvim/.config/nvim/lua/rich/plugins/99.lua
+
 # The defect this exists for, replayed: 0bdf224 flipped this line inside a
 # commit about LSP errors, trailing space and all.
 mutate "line wrap flipped off is caught" "line wrap is on" \

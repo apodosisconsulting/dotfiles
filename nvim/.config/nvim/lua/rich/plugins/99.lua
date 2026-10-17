@@ -5,21 +5,58 @@
 --   Vibe:   open-ended agentic exploration.
 return {
     "ThePrimeagen/99",
+    -- Loaded on its keys. With the mappings set inside config, lazy had no
+    -- trigger for 99 and loaded it at every start; its setup require()s
+    -- nvim-cmp, so cmp and its two sources came too. Once loaded, 99 also
+    -- registers a VimLeavePre hook that writes ./tmp/99-state into nvim's cwd
+    -- at the moment it quits, wherever it was started, if that has a tmp/
+    -- (this repo does), and a status loop that re-arms every second for the
+    -- life of the editor.
+    -- lazy's stubs load 99 and replay the press, so the first <leader>9v still
+    -- arrives in visual mode with the selection intact. One thing does move:
+    -- 99 takes its project root from the cwd when it loads, which is now the
+    -- first press rather than startup.
+    keys = {
+        -- Visual mode only, on purpose: 99 uses whatever the LAST visual
+        -- selection was, so a normal-mode binding could quietly act on an old
+        -- one.
+        {
+            "<leader>9v",
+            function()
+                require("99").visual()
+            end,
+            mode = "v",
+            desc = "99: Visual",
+        },
+        -- For a request you no longer want: cancels everything in flight.
+        {
+            "<leader>9x",
+            function()
+                require("99").stop_all_requests()
+            end,
+            desc = "99: Stop all",
+        },
+        {
+            "<leader>9s",
+            function()
+                require("99").search()
+            end,
+            desc = "99: Search",
+        },
+    },
     config = function()
         local _99 = require("99")
 
-        -- For logging that is to a file if you wish to trace through requests
-        -- for reporting bugs, i would not rely on this, but instead the provided
-        -- logging mechanisms within 99.  This is for more debugging purposes
-        local cwd = vim.uv.cwd()
-        local basename = vim.fs.basename(cwd)
         _99.setup({
             provider = _99.Providers.ClaudeCodeProvider,
-            logger = {
-                level = _99.DEBUG,
-                path = "/tmp/" .. basename .. ".99.debug",
-                print_on_error = true,
-            },
+            -- Errors are printed; that is all this does. 99 writes a log file
+            -- only with type = "file", so the /tmp path this used to give was
+            -- ignored and every line went to 99's void sink. DEBUG, which it
+            -- also set, is already 99's default level. For a file log, set
+            -- type = "file" and a path somewhere other than world-readable
+            -- /tmp: at DEBUG the lines hold what you typed and what the model
+            -- sent back, which is project source.
+            logger = { print_on_error = true },
             -- When setting this to something that is not inside the CWD tools
             -- such as claude code or opencode will have permission issues
             -- and generation will fail refer to tool documentation to resolve
@@ -76,25 +113,5 @@ return {
                 "AGENT.md",
             },
         })
-
-        -- take extra note that i have visual selection only in v mode
-        -- technically whatever your last visual selection is, will be used
-        -- so i have this set to visual mode so i dont screw up and use an
-        -- old visual selection
-        --
-        -- likely ill add a mode check and assert on required visual mode
-        -- so just prepare for it now
-        vim.keymap.set("v", "<leader>9v", function()
-            _99.visual()
-        end, { desc = "99: Visual" })
-
-        --- if you have a request you dont want to make any changes, just cancel it
-        vim.keymap.set("n", "<leader>9x", function()
-            _99.stop_all_requests()
-        end, { desc = "99: Stop all" })
-
-        vim.keymap.set("n", "<leader>9s", function()
-            _99.search()
-        end, { desc = "99: Search" })
     end,
 }

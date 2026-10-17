@@ -477,6 +477,37 @@ format_check scss '.a{.b{color:red}}
 ' prettier
 
 echo
+echo "== treesitter is set up, not just highlighting =="
+# treesitter.lua returns early when nvim-treesitter.configs cannot be required,
+# and until it said so that failure made no sound. Highlighting is the WRONG
+# thing to check, and was measured to be: with setup skipped, a lua buffer
+# still has an active highlighter, because Neovim's own lua ftplugin starts
+# one. What only setup provides is the textobject maps and the indentexpr, so
+# those are what is asserted.
+#
+# Lua is the fixture because Neovim ships its parser, so this does not depend
+# on a parser download. CI installs a newer Neovim than the pinned master
+# branch supports; if this goes red there, that is what a fresh machine gets,
+# and it is not a reason to loosen it.
+#
+# Proven by hand: misspelling the configs module in a copy of the config fails
+# both of the last two, and nvim then prints the error treesitter.lua reports.
+out="$(nv "$SANDBOX/start.lua" \
+  'lua vim.wait(2000, function() return not vim.tbl_isempty(vim.fn.maparg("af", "x", false, true)) end, 50)' \
+  'lua print("TS_FT=" .. vim.bo.filetype .. " TS_AF=" .. (vim.tbl_isempty(vim.fn.maparg("af", "x", false, true)) and "MISSING" or "mapped") .. " TS_INDENT=" .. vim.bo.indentexpr)')"
+assert "the fixture is a lua buffer, which the two below assume" contains "$out" "TS_FT=lua"
+assert "af selects a function: nvim-treesitter's textobjects were set up" \
+  contains "$out" "TS_AF=mapped"
+assert "indent comes from treesitter, not the filetype's own indentexpr" \
+  contains "$out" "TS_INDENT=nvim_treesitter#indent()"
+# Not an assertion; the ones above have already failed. When setup did not run,
+# what nvim printed carries treesitter.lua's reason, which is the next thing
+# anyone will want.
+if ! contains "$out" "TS_AF=mapped" || ! contains "$out" "TS_INDENT=nvim_treesitter#indent()"; then
+  printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+fi
+
+echo
 echo "== the leader mappings resolve to what the config claims =="
 # A lazy `keys` entry that never registers leaves a key that silently does
 # nothing — the plugin is configured, the binding is not there.
@@ -541,6 +572,54 @@ for mode in n v; do
     comm -13 "$TEST_TMP/want" "$TEST_TMP/got" | sed 's/^/      NEW since:    /'
   fi
 done
+
+echo
+echo "== every command a lazy stub names exists once its plugin loads =="
+# A lazy `cmd` entry is a stub: lazy defines the name, and the first use
+# deletes the stub, loads the plugin and runs the command again, expecting the
+# plugin to have defined the real one by then. If it has not, the name still
+# completes on the command line and fails only when it is used. Both ways that
+# happened here: trouble was never set up, so :Trouble never existed and
+# <leader>tt was E492; and fugitive's list named :Gblame and :Glog, which
+# fugitive no longer defines.
+#
+# Read from lazy rather than listed here, so a plugin that gains a cmd entry is
+# covered without anyone remembering this section exists. Proven by hand both
+# ways: deleting trouble's `opts = {}` fails the :Trouble line, and putting
+# "Gblame" back in fugitive's list fails that one.
+cat >"$SANDBOX/cmd_probe.lua" <<'LUA'
+local Plugin = require("lazy.core.plugin")
+local found = {}
+for name, plugin in pairs(require("lazy.core.config").plugins) do
+  local cmds = Plugin.values(plugin, "cmd", true)
+  if #cmds > 0 then
+    require("lazy").load({ plugins = { name } })
+    for _, c in ipairs(cmds) do
+      found[#found + 1] = string.format("%s:%s:%d", name, c, vim.fn.exists(":" .. c))
+    end
+  end
+end
+table.sort(found)
+print("LAZYCMDS=" .. table.concat(found, ","))
+LUA
+out="$(nv "$SANDBOX/start.lua" "luafile $SANDBOX/cmd_probe.lua")"
+lazy_cmds="$(printf '%s' "$out" | tr -d '\r' | grep -o 'LAZYCMDS=[^[:space:]]*' | head -1 | sed 's/^LAZYCMDS=//')"
+# The vacuity guard: an empty list would pass every assertion in the loop by
+# running none of them.
+if [ -z "$lazy_cmds" ]; then
+  no "could not read a single lazy cmd stub out of nvim — this section would assert nothing"
+  printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+else
+  printf '    %s command(s) named by lazy cmd stubs\n' "$(printf '%s' "$lazy_cmds" | tr ',' '\n' | grep -c .)"
+  for entry in $(printf '%s' "$lazy_cmds" | tr ',' ' '); do
+    cmd_plugin="${entry%%:*}"
+    cmd_rest="${entry#*:}"
+    cmd_exists="${cmd_rest##*:}"
+    # exists() is 2 for a user command that matches in full. :-0 is the
+    # failing side: a figure that could not be read must not pass.
+    assert ":${cmd_rest%%:*} exists once $cmd_plugin has loaded" [ "${cmd_exists:-0}" = 2 ]
+  done
+fi
 
 echo
 echo "== one clipboard: yank, paste and delete all go through the system's =="
@@ -617,6 +696,30 @@ else
   no "nvim did not resolve pbcopy/pbpaste to the shims; skipped every probe that would write a clipboard"
   printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
 fi
+
+echo
+echo "== quitting writes nothing into nvim's cwd =="
+# 99 keeps its request history in ./tmp/99-state and writes it from a
+# VimLeavePre hook its setup registers. The path is resolved when the hook
+# runs, so it lands in nvim's cwd at quit, wherever nvim was started. While 99
+# loaded at every start, every nvim that quit in a directory with a tmp/ wrote
+# one there: this repo has one, so a run of this suite from the repo root did.
+# 99 now loads on its keys, so a plain start and quit must leave tmp/ empty.
+# Neither nvim below changes directory, so each one quits in CWD99.
+#
+# Two guards against a vacuous pass. The probe reports whether 99 loaded, so a
+# run in which nvim never started cannot pass by writing nothing; and the same
+# start and quit with 99 loaded by hand must write the file, so a 99 that has
+# moved its state somewhere else cannot pass either.
+CWD99="$TEST_TMP/cwd99"
+mkdir -p "$CWD99/tmp"
+out="$(cd "$CWD99" && nv "$SANDBOX/start.lua" \
+  'lua print("LOADED_99=" .. tostring(require("lazy.core.config").plugins["99"]._.loaded ~= nil))')"
+assert "a plain start does not load 99" contains "$out" "LOADED_99=false"
+refute "...and quitting leaves no tmp/99-state in nvim's cwd" [ -e "$CWD99/tmp/99-state" ]
+(cd "$CWD99" && nv "$SANDBOX/start.lua" 'lua require("lazy").load({ plugins = { "99" } })' >/dev/null)
+assert "with 99 loaded, quitting does write it, so the check above can fail" \
+  [ -e "$CWD99/tmp/99-state" ]
 
 echo
 echo "== nothing leaked into the real config or repo =="

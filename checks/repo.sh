@@ -189,6 +189,21 @@ else
   meh "nvim not installed, cannot decode lazy-lock.json"
 fi
 
+# 99 is loaded on its keys, not at startup. With its mappings set inside config
+# lazy had no trigger for it, so it loaded at every start, pulled nvim-cmp in
+# with it, and left a VimLeavePre hook writing ./tmp/99-state into whatever
+# directory nvim was in when it quit. tests/test-performance.sh asserts the
+# eager SET in a running nvim; this is the half CI and the pre-commit hook see
+# without starting one. `lazy = false` overrides any trigger, so it fails too.
+SPEC99="nvim/.config/nvim/lua/rich/plugins/99.lua"
+if ! grep -qE '^[[:space:]]*keys[[:space:]]*=[[:space:]]*\{' "$SPEC99" 2>/dev/null; then
+  bad "$SPEC99 declares no lazy keys, so 99 and nvim-cmp load at every startup"
+elif grep -qE '^[[:space:]]*lazy[[:space:]]*=[[:space:]]*false' "$SPEC99"; then
+  bad "$SPEC99 declares keys but also lazy = false, which loads 99 at every startup anyway"
+else
+  ok "99 waits for its keys rather than loading at every startup"
+fi
+
 # Line wrap, and which way round it has to point.
 #
 # This is the one option in options.lua whose value has already been changed by
