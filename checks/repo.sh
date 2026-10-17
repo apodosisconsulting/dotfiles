@@ -1434,6 +1434,19 @@ else
   meh "nvim not installed, cannot read the formatters and linters the nvim config runs"
 fi
 
+# tpm installs nothing until prefix I is pressed, so on a fresh machine the
+# tmux plugins exist only if bootstrap clones them. tests/test-bootstrap.sh
+# runs install_tmux_plugins; this is what says main() runs it at all. Read
+# from main's body, comment lines dropped.
+boot_main="$(sed -n '/^main()/,/^}/p' bootstrap.sh | grep -vE '^[[:space:]]*#')"
+if [ -z "$boot_main" ]; then
+  bad "could not read bootstrap.sh's main() — whether it installs the tmux plugins cannot be said"
+elif grep -qE '^[[:space:]]*install_tmux_plugins([[:space:]]|$)' <<<"$boot_main"; then
+  ok "bootstrap.sh's main() installs the tmux plugins, so a fresh machine has them before prefix I"
+else
+  bad "bootstrap.sh's main() never runs install_tmux_plugins — a fresh machine has no resurrect or continuum until prefix I"
+fi
+
 section "Git hooks"
 # A hook and a make target are two copies of one command, and everything that
 # DESCRIBES a hook — the README, the Makefile's own help, bootstrap.sh, the
@@ -1890,5 +1903,21 @@ else
     bad "CI never runs 'Lazy! restore', so nothing holds the plugins it tests to lazy-lock.json"
   else
     ok "CI primes the plugins with 'Lazy! restore', at the commits lazy-lock.json pins"
+  fi
+  # The tmux plugins CI tests with have to be the ones tmux.conf declares. CI
+  # cloned three by hand and left out vim-tmux-navigator, the fourth. It now
+  # runs bootstrap's install_tmux_plugins, which reads tmux.conf's @plugin
+  # lines, so a git clone of its own anywhere in the workflow is a second list
+  # beside that one. Comment lines are dropped, so the comment explaining this
+  # cannot satisfy it.
+  ci_code="$(grep -vE '^[[:space:]]*#' "$CI")"
+  if ! grep -qE '(^|[^[:alnum:]_])install_tmux_plugins([^[:alnum:]_]|$)' <<<"$ci_code"; then
+    bad "CI never runs bootstrap's install_tmux_plugins — the tmux plugins it tests with are not the list tmux.conf declares"
+  elif ! grep -qE '^install_tmux_plugins\(\)' bootstrap.sh; then
+    bad "CI runs install_tmux_plugins, which bootstrap.sh does not define — the step fails, or installs nothing"
+  elif grep -qE 'git[[:space:]]+clone' <<<"$ci_code"; then
+    bad "CI clones something itself — a list of its own beside the @plugin lines install_tmux_plugins reads"
+  else
+    ok "CI installs the tmux plugins with bootstrap's install_tmux_plugins, from tmux.conf's own @plugin lines"
   fi
 fi

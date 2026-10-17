@@ -140,6 +140,35 @@ stow_packages() {
   stow -R -t "$HOME" "${packages[@]}"
 }
 
+install_tmux_plugins() {
+  # tmux.conf clones tpm on its first start, but tpm installs nothing by
+  # itself: until someone presses prefix I, resurrect, continuum and the
+  # navigator are absent, so prefix s runs a save.sh that is not there and
+  # nothing is ever saved. So every `set -g @plugin` line in tmux.conf is
+  # cloned here, read from the file itself so the list cannot drift from it,
+  # into the directory tpm would use: the repo's basename. Plain git rather
+  # than tpm's bin/install_plugins, which starts a tmux server on the default
+  # socket to read one environment variable. CI runs this too.
+  #
+  # Already there is skipped, and a failed clone only warns: the network is the
+  # likeliest thing to fail on a fresh machine, and prefix I can finish the job.
+  local conf="$DOTFILES_DIR/tmux/.config/tmux/tmux.conf"
+  local dir="$HOME/.config/tmux/plugins"
+  local plugins p
+  plugins="$(sed -n "s/^[[:space:]]*set -g @plugin '\([^']*\)'.*/\1/p" "$conf")"
+  if [[ -z "$plugins" ]]; then
+    warn "Read no @plugin lines out of $conf; no tmux plugins installed (prefix I in tmux later)"
+    return 0
+  fi
+  mkdir -p "$dir"
+  for p in $plugins; do
+    [[ -d "$dir/${p##*/}" ]] && continue
+    log "Installing tmux plugin $p"
+    git clone -q --depth 1 "https://github.com/$p" "$dir/${p##*/}" ||
+      warn "Could not clone $p (press prefix I in tmux later)"
+  done
+}
+
 install_hooks() {
   # Local to this repo, not global: core.hooksPath in the stowed git config
   # would apply to every repo on this machine, none of which have a check.sh.
@@ -182,6 +211,7 @@ main() {
   brew_install_pkgs
   install_rust
   stow_packages
+  install_tmux_plugins
   install_hooks
   post_checks
 }

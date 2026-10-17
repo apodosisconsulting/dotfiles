@@ -703,6 +703,24 @@ mutate "an update after the restore is caught" "at the commits lazy-lock.json pi
 mutate "CI never running restore at all is caught" "at the commits lazy-lock.json pins" \
   sed -i '' 's/"+Lazy! restore" +qa/+qa/' .github/workflows/ci.yml
 
+# The defect this exists for, replayed: CI cloning plugins by a list of its
+# own, which left vim-tmux-navigator out.
+# shellcheck disable=SC2016  # the $( ) and $HOME are text in ci.yml
+mutate "CI hand-cloning the tmux plugins again is caught" "CI installs the tmux plugins with" \
+  python3 -c 'p = ".github/workflows/ci.yml"; s = open(p).read()
+old = "plugins_log=\"$(bash -c '"'"'. ./bootstrap.sh && install_tmux_plugins'"'"' 2>&1)\""
+assert old in s
+open(p, "w").write(s.replace(old, "git clone --depth 1 https://github.com/tmux-plugins/tpm \"$HOME/.config/tmux/plugins/tpm\"", 1))'
+
+# A second list beside the function's is still a second list.
+# shellcheck disable=SC2016  # $HOME is text written into ci.yml
+mutate "a hand clone beside install_tmux_plugins is caught" "CI installs the tmux plugins with" \
+  sed -i '' 's|^          make stow$|          make stow\
+          git clone --depth 1 https://github.com/christoomey/vim-tmux-navigator "$HOME/x"|' .github/workflows/ci.yml
+
+mutate "CI calling an install_tmux_plugins bootstrap.sh does not define is caught" "CI installs the tmux plugins with" \
+  sed -i '' 's/^install_tmux_plugins() {$/install_plugins_for_tmux() {/' bootstrap.sh
+
 # ------------------------------------- assertions that could pass while being wrong
 
 # The old version of this compared COUNTS: renaming a binding kept the total at
@@ -771,6 +789,14 @@ mutate "no linters read out of lint.lua fails rather than passing vacuously" "fo
 # A filetype that yields no name is reported, not counted as nothing to install.
 mutate "a filetype whose formatters are not a list of names is caught" "formatters and linters the nvim config runs" \
   sed -i '' 's/lua = { "stylua" },/lua = function() return { "stylua" } end,/' nvim/.config/nvim/lua/rich/plugins/conform.lua
+
+# The defect this exists for: a fresh machine with no tmux plugins until
+# someone knows to press prefix I.
+mutate "bootstrap's main() not installing the tmux plugins is caught" "installs the tmux plugins, so a fresh machine" \
+  sed -i '' '/^  install_tmux_plugins$/d' bootstrap.sh
+
+mutate "the call left only as a comment in main() is caught" "installs the tmux plugins, so a fresh machine" \
+  sed -i '' 's/^  install_tmux_plugins$/  # install_tmux_plugins/' bootstrap.sh
 
 # ------------------------------------------- constants written down more than once
 
