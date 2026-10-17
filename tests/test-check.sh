@@ -689,13 +689,29 @@ mutate "a formatter bootstrap does not install is caught" "formatters and linter
 mutate "a linter bootstrap does not install is caught" "formatters and linters the nvim config runs" \
   sed -i '' '/^    shellcheck$/d' bootstrap.sh
 
-# The two named exceptions have to stay conditional on what provides them, or
-# naming them would excuse them for good.
-mutate "gofmt without go is caught" "formatters and linters the nvim config runs" \
+# The named exceptions have to stay conditional on what provides them, or
+# naming them would excuse them for good. go is what runs go install, so
+# goimports, built that way, goes with it.
+mutate "goimports without go to build it is caught" "formatters and linters the nvim config runs" \
   sed -i '' '/^    go$/d' bootstrap.sh
 
 mutate "rustfmt without the rustup install is caught" "formatters and linters the nvim config runs" \
   sed -i '' '/sh\.rustup\.rs/d' bootstrap.sh
+
+# A tool conform runs that bootstrap was to go install, and does not.
+mutate "a go-installed formatter bootstrap never installs is caught" "formatters and linters the nvim config runs" \
+  sed -i '' '/^  go install golang\.org\/x\/tools\/cmd\/goimports@latest ||$/d' bootstrap.sh
+
+# The warnings quote the command too; only a line that runs it counts.
+mutate "a go install left only in a comment is caught" "formatters and linters the nvim config runs" \
+  sed -i '' 's/^  go install golang\.org/  # go install golang.org/' bootstrap.sh
+
+mutate "a go install in a function main() never calls is caught" "formatters and linters the nvim config runs" \
+  sed -i '' '/^  install_go_tools$/d' bootstrap.sh
+
+# Before brew_install_pkgs, a fresh machine has no go to run it with.
+mutate "a go install run before Homebrew installs go is caught" "formatters and linters the nvim config runs" \
+  perl -0pi -e 's/  brew_install_pkgs\n  install_go_tools\n/  install_go_tools\n  brew_install_pkgs\n/' bootstrap.sh
 
 # The guard that is load-bearing: no formatters read means the loop runs zero
 # times, and "all 0 installed" would otherwise pass.
@@ -897,6 +913,34 @@ sed -i '' 's/lua = { "stylua" }/lua = { "stylua", "not-a-real-formatter" }/' \
 out="$(run_check_full | sed 's/\x1b\[[0-9;]*m//g')"
 assert "the second formatter in a filetype's list is checked as well as the first" \
   contains "$out" "formatter not-a-real-formatter is not on PATH"
+
+echo
+echo "== a go-installed formatter off PATH is found, and said to be off PATH =="
+# goimports lives where go install put it, which .zshrc adds to PATH. With
+# that directory taken off PATH, the machine check has to find it there and
+# say nvim would not, rather than call it missing or call it available. Only
+# meaningful where goimports was go-installed.
+gobin="${GOBIN:-${GOPATH:-$HOME/go}}"
+[ -n "${GOBIN:-}" ] || gobin="${gobin%%:*}/bin"
+if [ ! -x "$gobin/goimports" ]; then
+  printf '  \033[33mSKIP\033[0m  there is no goimports in %s\n' "$gobin"
+else
+  reset_repo
+  off_path="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vxF "$gobin" | grep -vxF "$gobin/" | paste -sd: -)"
+  out="$(PATH="$off_path" run_check_full | sed 's/\x1b\[[0-9;]*m//g')"
+  assert "goimports off PATH is reported as found in $gobin" \
+    contains "$out" "formatter goimports is in $gobin, which is not on PATH here"
+  refute "...not as available" contains "$out" "formatter goimports is available"
+  refute "...nor as missing" contains "$out" "formatter goimports is not on PATH or in mason"
+  case ":$PATH:" in
+    *":$gobin:"* | *":$gobin/:"*)
+      out="$(run_check_full | sed 's/\x1b\[[0-9;]*m//g')"
+      assert "and with it on PATH, as .zshrc puts it, it is available" \
+        contains "$out" "formatter goimports is available"
+      ;;
+    *) printf '  \033[33mSKIP\033[0m  %s is not on this PATH, so the on-PATH half cannot be asked\n' "$gobin" ;;
+  esac
+fi
 
 echo
 echo "== naming both Homebrew prefixes means only one has to exist =="

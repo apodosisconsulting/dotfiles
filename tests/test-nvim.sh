@@ -840,6 +840,18 @@ format_check json '{"a":1,   "b":2}
 ' prettier
 format_check scss '.a{.b{color:red}}
 ' prettier
+# goimports, whose point over gofmt is the imports: saved, the file has to
+# gain the two it uses and lose the one it does not, as well as being gofmt'd.
+# A gofmt, or gopls formatting in its place, would leave the import block as
+# it was, and that is the text this compares against.
+format_check go 'package main
+
+import "os"
+
+func main()  {
+        fmt.Println(strings.ToUpper("a"))
+}
+' goimports "$(printf 'package main\n\nimport (\n\t"fmt"\n\t"strings"\n)\n\nfunc main() {\n\tfmt.Println(strings.ToUpper("a"))\n}\n')"
 
 echo
 echo "== treesitter is set up, not just highlighting =="

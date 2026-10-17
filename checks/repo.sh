@@ -1342,6 +1342,12 @@ section "Fresh machine"
 # comments dropped, one package per word; the rustup install has to be a line
 # of code, not a comment.
 #
+# A tool bootstrap.sh builds with `go install <path>@<version>` counts too,
+# named by the last element of its path, as goimports is. Only when that line
+# is a command, not a comment or a message quoting it; only when go is on the
+# brew list to run it; and only when main() calls the function holding it
+# after brew_install_pkgs, which is what puts go there.
+#
 # The two tables are READ, by nvim, not grepped. A line-based read took the
 # quoted names off each `ft = {` line, and stylua keeps an entry written over
 # several lines as it is: `python = {`, `"black",`, `},`. The names on the inner
@@ -1363,6 +1369,23 @@ boot_pkgs="$(sed -n '/^brew_install_pkgs()/,/^}/p' bootstrap.sh |
   sed -e 's/#.*//' -e 's/local pkgs=(//' -e 's/)//' |
   tr -s '[:blank:]' '\n' | grep -v '^$')"
 boot_rustup="$(grep -vE '^[[:space:]]*#' bootstrap.sh | grep -cF 'sh.rustup.rs')"
+# The function each `go install` line is in, then the tool it builds.
+boot_go_lines="$(awk '
+  /^[a-z_]+\(\) \{/ { fn = $1; sub(/\(\)/, "", fn) }
+  /^[[:space:]]*go install [^[:space:]]+@/ {
+    path = $3; sub(/@.*/, "", path); n = split(path, part, "/"); print fn, part[n]
+  }
+' bootstrap.sh)"
+boot_main="$(sed -n '/^main() {/,/^}/p' bootstrap.sh | grep -vE '^[[:space:]]*#' | awk '{ print $1 }')"
+boot_go_tools=""
+while read -r fn tool; do
+  [ -n "$tool" ] || continue
+  grep -qxF go <<<"$boot_pkgs" || continue
+  printf '%s\n' "$boot_main" | awk -v a=brew_install_pkgs -v b="$fn" \
+    '$1 == a && !ia { ia = NR } $1 == b && !ib { ib = NR } END { exit !(ia && ib && ia < ib) }' || continue
+  boot_go_tools="$boot_go_tools$tool
+"
+done <<<"$boot_go_lines"
 conform_lua=nvim/.config/nvim/lua/rich/plugins/conform.lua
 lint_lua=nvim/.config/nvim/lua/rich/plugins/lint.lua
 if command -v nvim >/dev/null 2>&1; then
@@ -1426,7 +1449,10 @@ end' | nvim --clean --headless -l /dev/stdin "$conform_lua" ${lint_arg:+"$lint_a
       case "$t" in
         gofmt) grep -qxF go <<<"$boot_pkgs" && continue ;;
         rustfmt) [ "${boot_rustup:-0}" -gt 0 ] && continue ;;
-        *) grep -qxF "$t" <<<"$boot_pkgs" && continue ;;
+        *)
+          grep -qxF "$t" <<<"$boot_pkgs" && continue
+          grep -qxF "$t" <<<"$boot_go_tools" && continue
+          ;;
       esac
       bad "the nvim config runs $t, and bootstrap.sh does not install it — on a fresh machine its filetypes are silently not formatted or linted"
       fresh_bad=$((fresh_bad + 1))

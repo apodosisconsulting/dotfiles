@@ -81,6 +81,21 @@ brew_install_pkgs() {
   brew install --cask font-jetbrains-mono-nerd-font || warn "Nerd Font install failed (rerun later)"
 }
 
+install_go_tools() {
+  # conform.lua formats Go with goimports: gofmt, plus adding and removing
+  # imports on save. It is no Homebrew formula; go install builds it into
+  # GOBIN, or GOPATH/bin (~/go/bin by default), which .zshrc puts on PATH. So
+  # this runs after brew_install_pkgs, which installs go. Warn rather than die:
+  # without it format-on-save falls back to gopls, which leaves imports alone.
+  if ! command -v go >/dev/null 2>&1; then
+    warn "go is not installed, so neither is goimports (later: go install golang.org/x/tools/cmd/goimports@latest)"
+    return 0
+  fi
+  log "Installing goimports (go install)"
+  go install golang.org/x/tools/cmd/goimports@latest ||
+    warn "Could not install goimports (later: go install golang.org/x/tools/cmd/goimports@latest)"
+}
+
 install_rust() {
   # Rust is rustup-managed (lsp.lua uses the rustup-provided rust-analyzer),
   # so install via rustup rather than brew. Guarded: no-op if already present.
@@ -179,6 +194,7 @@ main() {
   need_cmd brew
 
   brew_install_pkgs
+  install_go_tools
   install_rust
   stow_packages
   install_hooks
