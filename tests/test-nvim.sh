@@ -299,6 +299,50 @@ if ! contains "$out" "TYPED_LINES="; then
   printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
 fi
 
+# ...and only in files. The autocmd fires on every FileType, and a prompt
+# buffer has one: Telescope's is TelescopePrompt. With textwidth 80 and 't' a
+# query typed past column 80 was broken onto a new line as it was typed, and
+# Telescope searched only for the text after the break. So type one, into a
+# real find_files, and count the prompt's lines. The assertions above are the
+# other half: excluding the prompt must not exclude a file.
+cat >"$SANDBOX/prompt_probe.lua" <<'LUA'
+local ok, builtin = pcall(require, "telescope.builtin")
+if not ok then
+  print("PROMPT_TELESCOPE=missing")
+  return
+end
+builtin.find_files({ cwd = vim.env.TW_DIR })
+vim.wait(3000, function() return vim.bo.filetype == "TelescopePrompt" end, 50)
+local buf = vim.api.nvim_get_current_buf()
+local query = string.rep("abcdefghi ", 9) .. "z"
+vim.api.nvim_feedkeys(query, "xt", false)
+local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+print(string.format("PROMPT_FT=%s PROMPT_BT=%s PROMPT_QUERY_COLS=%d PROMPT_LINES=%d PROMPT_WHOLE=%s PROMPT_TW=%d",
+  vim.bo[buf].filetype, vim.bo[buf].buftype, #query, #lines,
+  tostring(lines[1] ~= nil and lines[1]:sub(-#query) == query), vim.bo[buf].textwidth))
+LUA
+out="$(TW_DIR="$SANDBOX" nv "$SANDBOX/start.lua" 'lua vim.wait(1000)' "luafile $SANDBOX/prompt_probe.lua")"
+if contains "$out" "PROMPT_TELESCOPE=missing"; then
+  printf '  \033[33mSKIP\033[0m  telescope is not installed, so there is no prompt to type into\n'
+else
+  prompt_cols="$(printf '%s' "$out" | sed -n 's/.*PROMPT_QUERY_COLS=\([0-9]*\).*/\1/p')"
+  prompt_lines="$(printf '%s' "$out" | sed -n 's/.*PROMPT_LINES=\([0-9]*\).*/\1/p')"
+  prompt_tw="$(printf '%s' "$out" | sed -n 's/.*PROMPT_TW=\([0-9]*\).*/\1/p')"
+  printf "    typing %s columns into Telescope's prompt left %s line(s)\n" \
+    "${prompt_cols:-0}" "${prompt_lines:-0}"
+  # Without these the count below could be of some other buffer.
+  assert "the probe typed into Telescope's prompt buffer (guards a vacuous pass)" \
+    contains "$out" "PROMPT_FT=TelescopePrompt PROMPT_BT=prompt"
+  assert "...a query longer than 80 columns" [ "${prompt_cols:-0}" -gt 80 ]
+  assert "a long Telescope query stays on one line" [ "${prompt_lines:-0}" -eq 1 ]
+  assert "...and that line holds the whole query" contains "$out" "PROMPT_WHOLE=true"
+  # 80 is the failing side: a textwidth that could not be read must not pass.
+  assert "the prompt does not get the files' textwidth of 80" [ "${prompt_tw:-80}" -ne 80 ]
+  if ! contains "$out" "PROMPT_LINES="; then
+    printf '      nvim said: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+  fi
+fi
+
 echo
 echo "== an LSP client actually attaches to a real file =="
 # vim.wait with a predicate polls rather than sleeping a guess, so this either
@@ -309,6 +353,137 @@ if [ -x "$HOME/.local/share/nvim/mason/bin/lua-language-server" ]; then
     'lua local c = vim.lsp.get_clients({ bufnr = 0 }); print("FT=" .. vim.bo.filetype .. " CLIENTS=" .. #c .. " NAME=" .. (c[1] and c[1].name or "none"))')"
   assert "the filetype is detected" contains "$out" "FT=lua"
   assert "a language server attached" contains "$out" "NAME=lua_ls"
+
+  # Attaching is not knowing anything. In this config's own files lua_ls had no
+  # definition and no hover for vim.api, because .luarc.json set a library that
+  # replaced the one lazydev sends -- and attached all the same. checks/repo.sh
+  # reads .luarc.json; this asks lua_ls itself, in a file of the config nvim is
+  # running, where the vim.api function the file calls is defined.
+  #
+  # The definition is polled: lua_ls answers "none" until it has loaded its
+  # library, so one early answer says nothing either way. The file is opened
+  # from a .txt, so the only lua_ls running is the one rooted at the config.
+  #
+  # Knowing vim.* is also what lets lua_ls hold this config's calls to the
+  # plugins' own annotations. While .luarc.json replaced the library it checked
+  # nothing and said nothing; once lazydev's library got through, it found 9
+  # warnings in 99.lua, lsp.lua, treesitter.lua and trouble.lua, and options.lua
+  # sets virtual_text, so each one sat inline in the file. So the same nvim also
+  # asks what lua_ls reports in every lua file of the config, and requires
+  # nothing.
+  #
+  # lua_ls pushes diagnostics and cannot be asked for them (it answers
+  # textDocument/diagnostic with "method not found"), and it publishes nothing
+  # at all for a file with nothing wrong, so silence is all a clean file says.
+  # Silence is also what a lua_ls that never looked would say. So a canary goes
+  # in with the config's files: a vim.api call with its arguments missing, in a
+  # scratch buffer named inside the config, so it is diagnosed as one of them.
+  # Every one is opened before lua_ls starts loading its workspace, so one load
+  # covers every plugin they require and one pass diagnoses them all. A file
+  # opened after the load was measured putting the others off by 3.6s. Only
+  # once lua_ls has flagged the canary, has no progress report open, and has
+  # published nothing for 3s, is the count read.
+  cat >"$SANDBOX/luadef_probe.lua" <<'LUA'
+local busy, said = {}, vim.uv.now()
+vim.api.nvim_create_autocmd("LspProgress", {
+  callback = function(ev)
+    busy[ev.data.params.token] = ev.data.params.value.kind ~= "end" or nil
+  end,
+})
+local publish = vim.lsp.handlers["textDocument/publishDiagnostics"]
+vim.lsp.handlers["textDocument/publishDiagnostics"] = function(...)
+  said = vim.uv.now()
+  return publish(...)
+end
+local config = vim.fn.stdpath("config")
+vim.cmd.edit(vim.fn.fnameescape(config .. "/lua/rich/options.lua"))
+local files = vim.list_extend({ config .. "/init.lua" }, vim.fn.globpath(config, "lua/**/*.lua", false, true))
+for _, f in ipairs(files) do
+  local b = vim.fn.bufadd(f)
+  vim.fn.bufload(b)
+  vim.bo[b].filetype = "lua"
+end
+vim.wait(20000, function()
+  return #vim.lsp.get_clients({ bufnr = 0, name = "lua_ls" }) > 0
+end, 50)
+local client = vim.lsp.get_clients({ bufnr = 0, name = "lua_ls" })[1]
+-- A scratch buffer is buftype=nofile, which no :w can write, so its name puts
+-- it in lua_ls's workspace and nothing on disk. It is attached by hand,
+-- because nvim attaches no server to a nofile buffer, and without FileType,
+-- which nothing else needs to see.
+local canary = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_name(canary, config .. "/luadiag_canary.lua")
+vim.api.nvim_buf_set_lines(canary, 0, -1, false, { "vim.api.nvim_buf_get_lines()" })
+vim.api.nvim_buf_call(canary, function()
+  vim.cmd("noautocmd setlocal filetype=lua")
+end)
+if client then
+  vim.lsp.buf_attach_client(canary, client.id)
+end
+local row, col
+for i, l in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
+  local s = l:find("vim.api.nvim_", 1, true)
+  if s and not l:match("^%s*%-%-") then
+    -- 0-based, and a few characters into the function name after "vim.api."
+    row, col = i - 1, s + 9
+    break
+  end
+end
+local def = "none"
+if client and row then
+  local params = { textDocument = { uri = vim.uri_from_bufnr(0) }, position = { line = row, character = col } }
+  vim.wait(30000, function()
+    local res = client:request_sync("textDocument/definition", params, 5000, 0)
+    local r = res and res.result
+    if r and r[1] then
+      def = vim.uri_to_fname(r[1].uri or r[1].targetUri)
+      return true
+    end
+    return false
+  end, 500)
+end
+print(string.format("LUADEF_ATTACHED=%s LUADEF_CALL=%s LUADEF=%s", tostring(client ~= nil), tostring(row ~= nil), def))
+if def == "none" then
+  return
+end
+local flagged = false
+vim.wait(60000, function()
+  for _, d in ipairs(vim.diagnostic.get(canary)) do
+    flagged = flagged or d.code == "missing-parameter"
+  end
+  return flagged and next(busy) == nil and vim.uv.now() - said >= 3000
+end, 250)
+local reported = {}
+for _, d in ipairs(vim.diagnostic.get()) do
+  if d.bufnr ~= canary and d.source and d.source:find("Lua") then
+    local name = vim.api.nvim_buf_get_name(d.bufnr):sub(#config + 2)
+    table.insert(reported, string.format("%s:%d [%s] %s", name, d.lnum + 1, tostring(d.code), (d.message:gsub("\n", " "))))
+  end
+end
+table.sort(reported)
+for _, l in ipairs(reported) do
+  print("LUADIAG " .. l)
+end
+print(string.format("LUADIAG_CANARY=%s LUADIAG_FILES=%d LUADIAG_TOTAL=%d", tostring(flagged), #files, #reported))
+LUA
+  : >"$SANDBOX/luadef.txt"
+  out="$(nv "$SANDBOX/luadef.txt" "luafile $SANDBOX/luadef_probe.lua")"
+  luadef="$(printf '%s' "$out" | sed -n 's/.*LUADEF=\([^ ]*\).*/\1/p' | head -1)"
+  printf '    vim.api in options.lua is defined at %s\n' "${luadef:-nothing nvim printed}"
+  assert "lua_ls attaches to a file of this config" contains "$out" "LUADEF_ATTACHED=true"
+  assert "the probe found a vim.api call to ask about (guards a vacuous pass)" \
+    contains "$out" "LUADEF_CALL=true"
+  assert "lua_ls finds that call's definition in Neovim's own runtime" \
+    contains "${luadef:-none}" "/lua/vim/_meta/"
+  luadiag_files="$(printf '%s' "$out" | sed -n 's/.*LUADIAG_FILES=\([0-9]*\).*/\1/p' | head -1)"
+  luadiag_total="$(printf '%s' "$out" | sed -n 's/.*LUADIAG_TOTAL=\([0-9]*\).*/\1/p' | head -1)"
+  printf "    lua_ls reports %s problem(s) across %s of the config's lua files\n" \
+    "${luadiag_total:-an unread number of}" "${luadiag_files:-0}"
+  printf '%s\n' "$out" | sed -n 's/^LUADIAG \(.*\)/      \1/p'
+  assert "lua_ls flags the canary's call, so it was checking calls (guards a vacuous pass)" \
+    contains "$out" "LUADIAG_CANARY=true"
+  assert "...with the whole config open, not a fragment of it" [ "${luadiag_files:-0}" -ge 20 ]
+  assert "lua_ls reports nothing in any of the config's own lua files" [ "${luadiag_total:-1}" -eq 0 ]
 else
   printf '  \033[33mSKIP\033[0m  lua-language-server is not installed via mason\n'
 fi
@@ -431,8 +606,13 @@ echo "== format-on-save actually reformats =="
 # lua at a nonexistent formatter left this assertion green. Ask conform which
 # formatter it would actually use for the buffer, and require that it is the
 # configured one AND that it is available.
-format_check() { # $1 = extension, $2 = ugly content, $3 = expected formatter
-  local ext="$1" ugly="$2" want="$3"
+#
+# Nor is "changed" enough where the flags matter. sh passed it for as long as
+# conform was appending its own -i after the configured flags: the file did
+# change -- to 4-space indentation, which `make lint` then rejected. Given the
+# exact text the formatter should produce, the check compares against that.
+format_check() { # $1 = extension, $2 = ugly content, $3 = expected formatter, $4 = exact result (optional)
+  local ext="$1" ugly="$2" want="$3" want_text="${4:-}"
   local f="$SANDBOX/fmt.$ext"
   # A formatter that is not installed is an environment fact, not a defect in
   # the config — skip and say which, the way every other suite here does. Only a
@@ -458,7 +638,16 @@ format_check() { # $1 = extension, $2 = ugly content, $3 = expected formatter
     # no available stylua for a .lua buffer" is actionable on its own.
     no "$ext: conform offers no available '$want' for this buffer"
   fi
-  if [ "$(cat "$f")" != "$ugly" ]; then
+  if [ -n "$want_text" ]; then
+    # $( ) strips trailing newlines from both sides alike.
+    if [ "$(cat "$f")" = "$(printf '%s' "$want_text")" ]; then
+      ok "$ext is formatted on save by $want, into exactly the text expected of it"
+    else
+      no "$ext: saving did not produce the text $want should make of it (expected, then got):"
+      printf '%s' "$want_text" | sed 's/^/      want| /'
+      sed 's/^/      got | /' "$f"
+    fi
+  elif [ "$(cat "$f")" != "$ugly" ]; then
     ok "$ext is formatted on save by $want, which conform reports as available"
   else
     no "$ext: $want is available but the file was not reformatted on save"
@@ -467,10 +656,22 @@ format_check() { # $1 = extension, $2 = ugly content, $3 = expected formatter
 
 format_check lua 'local   x=1
 ' stylua
+# What `make lint` passes, -i 2 -ci: two spaces, and case arms indented under
+# their `case`. The 8-space body tells -i 2 from conform's -i <shiftwidth>,
+# which made it 4; the case arm tells -ci from its absence.
 format_check sh 'if true; then
         echo hi
 fi
-' shfmt
+case x in
+a) echo a ;;
+esac
+' shfmt 'if true; then
+  echo hi
+fi
+case x in
+  a) echo a ;;
+esac
+'
 format_check json '{"a":1,   "b":2}
 ' prettier
 format_check scss '.a{.b{color:red}}
@@ -620,6 +821,82 @@ else
     assert ":${cmd_rest%%:*} exists once $cmd_plugin has loaded" [ "${cmd_exists:-0}" = 2 ]
   done
 fi
+
+echo
+echo "== a count reaches ]q [q ]d [d =="
+# Neovim's own versions of these four take a count; this config replaces them,
+# and the replacements used to throw it away: 3]q moved one entry, and so did
+# 3]d. Seven quickfix entries and seven diagnostics, one per line, and each
+# jump of three from an end has to land on the fourth. The maps are checked to
+# be this config's first, because Neovim's defaults honour a count too -- with
+# the overrides gone, every count assertion would pass on the defaults.
+#
+# A plain ]q is asserted as well: v:count1 is 1 with no count typed, and a
+# v:count there would have been 0 -- which cnext rejects.
+cat >"$SANDBOX/count_probe.lua" <<'LUA'
+local buf = vim.api.nvim_get_current_buf()
+local out = {}
+local function desc(lhs)
+  local m = vim.fn.maparg(lhs, "n", false, true)
+  return (m and m.desc or "none"):gsub(" ", "_")
+end
+out[#out + 1] = "MAP_NQ=" .. desc("]q") .. " MAP_ND=" .. desc("]d")
+local items = {}
+for i = 1, 7 do
+  items[#items + 1] = { bufnr = buf, lnum = i, col = 1, text = "entry " .. i }
+end
+vim.fn.setqflist(items)
+vim.cmd("cfirst")
+vim.api.nvim_feedkeys("3]q", "x", false)
+out[#out + 1] = "QF_NEXT=" .. vim.fn.getqflist({ idx = 0 }).idx
+out[#out + 1] = "QF_NEXT_LINE=" .. vim.api.nvim_win_get_cursor(0)[1]
+vim.api.nvim_feedkeys("]q", "x", false)
+out[#out + 1] = "QF_PLAIN=" .. vim.fn.getqflist({ idx = 0 }).idx
+vim.cmd("clast")
+vim.api.nvim_feedkeys("3[q", "x", false)
+out[#out + 1] = "QF_PREV=" .. vim.fn.getqflist({ idx = 0 }).idx
+local ns = vim.api.nvim_create_namespace("count_probe")
+local diags = {}
+for i = 0, 6 do
+  diags[#diags + 1] = { lnum = i, col = 0, message = "d" .. i, severity = vim.diagnostic.severity.WARN }
+end
+vim.diagnostic.set(ns, buf, diags)
+out[#out + 1] = "DIAGS=" .. #vim.diagnostic.get(buf)
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+vim.api.nvim_feedkeys("3]d", "x", false)
+out[#out + 1] = "D_NEXT=" .. vim.api.nvim_win_get_cursor(0)[1]
+vim.api.nvim_win_set_cursor(0, { 7, 0 })
+vim.api.nvim_feedkeys("3[d", "x", false)
+out[#out + 1] = "D_PREV=" .. vim.api.nvim_win_get_cursor(0)[1]
+print(table.concat(out, " "))
+LUA
+printf 'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n' >"$SANDBOX/count.txt"
+out="$(nv "$SANDBOX/count.txt" 'lua vim.wait(1500)' "luafile $SANDBOX/count_probe.lua")"
+# Each figure defaults to 0, which no assertion below accepts.
+count_fig() { printf '%s' "$out" | sed -n "s/.*$1=\([0-9]*\).*/\1/p" | head -1; }
+qf_next="$(count_fig QF_NEXT)"
+qf_next_line="$(count_fig QF_NEXT_LINE)"
+qf_plain="$(count_fig QF_PLAIN)"
+qf_prev="$(count_fig QF_PREV)"
+diag_n="$(count_fig DIAGS)"
+d_next="$(count_fig D_NEXT)"
+d_prev="$(count_fig D_PREV)"
+printf '    3]q -> entry %s, then ]q -> %s; 3[q from 7 -> %s; 3]d -> line %s; 3[d from 7 -> line %s\n' \
+  "${qf_next:-0}" "${qf_plain:-0}" "${qf_prev:-0}" "${d_next:-0}" "${d_prev:-0}"
+assert "]q and ]d are this config's maps, not Neovim's defaults (guards a vacuous pass)" \
+  contains "$out" "MAP_NQ=Next_quickfix_item MAP_ND=Next_diagnostic"
+assert "the seven diagnostics to jump between are there" [ "${diag_n:-0}" -eq 7 ]
+assert "3]q from the first entry lands on the fourth" [ "${qf_next:-0}" -eq 4 ]
+# Entry N is on line N. The two defaults differ so that neither figure being
+# missing can make them equal.
+assert "...on that entry's line, so zz did not take the count as well" \
+  [ "${qf_next_line:-0}" -eq "${qf_next:--1}" ]
+plain_step=0
+[ "${qf_next:-0}" -ge 1 ] && plain_step=$((${qf_plain:-0} - qf_next))
+assert "a plain ]q after it still moves one entry" [ "$plain_step" -eq 1 ]
+assert "3[q from the last entry lands on the fourth" [ "${qf_prev:-0}" -eq 4 ]
+assert "3]d from line 1 lands on the fourth diagnostic" [ "${d_next:-0}" -eq 4 ]
+assert "3[d from line 7 lands on the fourth diagnostic" [ "${d_prev:-0}" -eq 4 ]
 
 echo
 echo "== one clipboard: yank, paste and delete all go through the system's =="

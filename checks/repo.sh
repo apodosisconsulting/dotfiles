@@ -204,6 +204,67 @@ else
   ok "99 waits for its keys rather than loading at every startup"
 fi
 
+# .luarc.json must leave the library to lazydev, and must not hide its absence.
+#
+# lua_ls lets .luarc.json override the settings its client sends, and lazydev
+# works by sending them. This file set workspace.library to luv alone, which
+# replaced lazydev's whole library: vim.api had no definition and no hover
+# anywhere in this config. It also set diagnostics.globals = ["vim"], which does
+# not touch the library -- with that key alone, definitions still resolve -- but
+# silenced the undefined-global warning on vim, the one thing that would have
+# said the library was missing. Two keys doing two different kinds of harm, so
+# two assertions, each with its own reason. The file itself stays, as lua_ls's
+# root marker.
+#
+# Parsed rather than grepped, because lua_ls reads a nested
+# {"workspace": {"library": ...}} the same as the dotted key, with or without a
+# "Lua." prefix; every leaf is printed as one dotted key, and each entry of a
+# list as key=entry, so that only a globals list naming vim fails. A file that
+# is missing, does not parse, or holds no keys at all fails, rather than reading
+# as a file that sets nothing.
+LUARC="nvim/.config/nvim/.luarc.json"
+if command -v nvim >/dev/null 2>&1; then
+  # A plain string, not a heredoc in $( ), for the bash 3.2 reason given above
+  # the lua parse check: so no apostrophes anywhere in it.
+  luarc_keys="$(printf '%s\n' 'local f = io.open(arg[1])
+if not f then return end
+local ok, t = pcall(vim.json.decode, f:read("*a"))
+f:close()
+if not ok or type(t) ~= "table" then return end
+local function walk(prefix, v)
+  if type(v) == "table" and next(v) ~= nil and not vim.islist(v) then
+    for k, x in pairs(v) do walk(prefix .. k .. ".", x) end
+  else
+    local key = prefix:sub(1, -2):gsub("^Lua%.", "")
+    io.stdout:write(key, "\n")
+    if type(v) == "table" then
+      for _, x in ipairs(v) do io.stdout:write(key, "=", tostring(x), "\n") end
+    end
+  end
+end
+walk("", t)' | nvim --clean --headless -l /dev/stdin "$LUARC" 2>/dev/null)"
+  # grep -c prints 0 and exits 1 when nothing matches; the count is all that is
+  # read, and an empty one reads as the failing side.
+  luarc_library="$(printf '%s\n' "$luarc_keys" | grep -cx 'workspace\.library')"
+  luarc_globals="$(printf '%s\n' "$luarc_keys" | grep -cx 'diagnostics\.globals=vim')"
+  if [ -z "$luarc_keys" ]; then
+    bad "could not read any setting out of $LUARC — missing, not JSON, or empty, so whether it overrides lazydev cannot be said"
+  else
+    if [ "${luarc_library:-1}" -eq 0 ]; then
+      ok ".luarc.json leaves workspace.library to lazydev, so lua_ls knows what vim.* is"
+    else
+      bad "$LUARC sets workspace.library — lua_ls lets that file override what lazydev sends, so it replaces lazydev's library and vim.* gets no definitions or hover in this config"
+    fi
+    if [ "${luarc_globals:-1}" -eq 0 ]; then
+      ok ".luarc.json does not declare vim a global, so a missing library still shows as vim being undefined"
+    else
+      bad "$LUARC lists vim in diagnostics.globals — definitions still resolve, but it silences the undefined-global warning on vim, which is how a missing lazydev library shows"
+    fi
+  fi
+else
+  meh "nvim not installed, cannot parse $LUARC"
+fi
+
 # Line wrap, and which way round it has to point.
 #
 # This is the one option in options.lua whose value has already been changed by
@@ -327,6 +388,35 @@ elif [ "${lsp_calls:-0}" -ne 1 ]; then
   bad "the nvim config calls vim.lsp.enable ${lsp_calls:-0} times, not once, so lsp.lua's list is not the whole story"
 else
   ok "Mason installs every language server lsp.lua starts, and lsp.lua starts all $(printf '%s\n' "$lsp_installed" | grep -c .) it installs"
+fi
+
+# A count on ]q [q ]d [d.
+#
+# Neovim's own versions of all four take one: 3]q moves three quickfix entries.
+# This config replaces them -- to centre the line, and to open the diagnostic
+# float -- and the replacements hard-coded one: a bare cnext under <Cmd>, and
+# vim.diagnostic.jump({ count = 1 }). So 3]q moved one entry, and nothing said
+# so, because a count is exactly the thing nobody types while testing a map.
+#
+# Every cnext, cprev and vim.diagnostic.jump in the lua config has to take the
+# count, as v:count1 or vim.v.count1, on the same line. Comment lines are
+# dropped, and so is a trailing comment, so that neither can supply the word.
+# tests/test-nvim.sh presses 3]q and 3]d in a running nvim; this catches the
+# literal coming back.
+navs="$(grep -rnE 'cnext|cprev|vim\.diagnostic\.jump\(' nvim/.config/nvim --include='*.lua' |
+  grep -vE '^[^:]*:[0-9]+:[[:space:]]*--' | sed 's/[[:space:]]--.*$//')"
+navs_next="$(printf '%s\n' "$navs" | grep -c 'cnext')"
+navs_prev="$(printf '%s\n' "$navs" | grep -c 'cprev')"
+navs_jump="$(printf '%s\n' "$navs" | grep -c 'diagnostic\.jump')"
+navs_all="$(printf '%s\n' "$navs" | grep -c .)"
+uncounted="$(printf '%s\n' "$navs" | grep . | grep -vE 'v[:.]count1')"
+if [ "${navs_next:-0}" -eq 0 ] || [ "${navs_prev:-0}" -eq 0 ] || [ "${navs_jump:-0}" -eq 0 ]; then
+  bad "found no cnext, cprev or vim.diagnostic.jump in the lua config — ]q [q ]d [d have moved, and the count check would be vacuous"
+elif [ -n "$uncounted" ]; then
+  bad "quickfix or diagnostic jumps that ignore a count, so 3]q or 3]d moves one:"
+  printf '%s\n' "$uncounted" | sed 's/^/      /'
+else
+  ok "]q [q ]d [d take a count: all $navs_all cnext, cprev and vim.diagnostic.jump calls use v:count1"
 fi
 
 section "tmux config"
@@ -613,6 +703,99 @@ if [ "$quoted_seen" -eq 0 ]; then
   meh "no comment quotes a tmux.conf line, so there was nothing to compare"
 elif [ "$quoted_bad" -eq 0 ]; then
   ok "every tmux.conf line a comment quotes ($quoted_seen of them) is really in tmux.conf"
+fi
+
+# shfmt's flags are written twice: once in the Makefile's lint recipe, once in
+# conform.lua for format-on-save. If they differ, saving a script in nvim and
+# linting it disagree, and the file you just saved fails `make lint`.
+#
+# They did differ, without either copy changing: conform.lua passed its flags
+# as prepend_args, and conform's own shfmt args append `-i <shiftwidth>` after
+# them whenever no .editorconfig is found. shfmt takes the last -i, shiftwidth
+# is 4, so every save re-indented to 4 while both files read `-i 2 -ci`. That
+# is why prepend_args is rejected outright rather than compared: the strings in
+# it are not the flags shfmt ends up with.
+#
+# The block ends at the first line that is only `},`, so a multi-line table
+# nested ahead of `args` would end it early; that reads as empty and fails,
+# rather than passing.
+#
+# Nor is conform.lua's block the only place shfmt can be configured. lazy
+# deep-merges the opts of every spec for a plugin, so a second conform spec
+# anywhere in the config that says ["shfmt"] = { append_args = { "-i", "4" } }
+# lands inside this block at runtime: args stay ours, -i 4 goes after them, and
+# a save re-indents to 4 while this block still reads -i 2. A plain assignment
+# replaces the block instead, and either way which wins depends on load order,
+# not on anything this can read. So every definition of shfmt in the lua config
+# is counted -- a bare key, a bracketed one with either quote, an assignment to
+# formatters.shfmt, or to a field of shfmt -- and more than one fails, as does
+# a scan that cannot find conform.lua's own. Inside each, prepend_args and
+# append_args fail too, wherever it is.
+CONFORM="nvim/.config/nvim/lua/rich/plugins/conform.lua"
+lint_shfmt="$(awk '
+  /^lint:/ { inside = 1; next }
+  inside && !/^\t/ { inside = 0 }
+  inside {
+    for (i = 1; i <= NF; i++) {
+      if ($i != "shfmt") continue
+      out = ""
+      for (j = i + 1; j <= NF && $j !~ /^\$/; j++) {
+        if ($j != "-d") out = out (out == "" ? "" : " ") $j
+      }
+      print out
+    }
+  }' Makefile | sort -u)"
+# The awk follows each definition from where it matches to its closing brace,
+# and reports any prepend_args or append_args on the way. Whole-line comments
+# are skipped and trailing ones cut, since conform.lua's own comment names
+# prepend_args.
+shfmt_def="(^|[^A-Za-z_.\"'])shfmt[[:space:]]*=[[:space:]]*\\{"
+shfmt_def="$shfmt_def|\\[[[:space:]]*[\"']shfmt[\"'][[:space:]]*\\][[:space:]]*=([^=]|\$)"
+shfmt_def="$shfmt_def|formatters\\.shfmt[[:space:]]*=([^=]|\$)"
+shfmt_def="$shfmt_def|(\\.shfmt|\\[[[:space:]]*[\"']shfmt[\"'][[:space:]]*\\])(\\.[A-Za-z_]+|\\[[^]]*\\])+[[:space:]]*=([^=]|\$)"
+# shellcheck disable=SC2016  # $0 is awk's record, not the shell's
+shfmt_scan="$(find nvim/.config/nvim -name '*.lua' | sort |
+  SHFMT_DEF="$shfmt_def" xargs awk '
+    FNR == 1 { depth = 0 }
+    /^[[:space:]]*--/ { next }
+    {
+      line = $0
+      sub(/[[:space:]]--.*$/, "", line)
+      if (depth == 0) {
+        if (!match(line, ENVIRON["SHFMT_DEF"])) next
+        print "def " FILENAME ":" FNR ":" $0
+        line = substr(line, RSTART)
+      }
+      if (line ~ /(prepend|append)_args/) print "extra " FILENAME ":" FNR ":" $0
+      t = line
+      depth += gsub(/\{/, "", t)
+      t = line
+      depth -= gsub(/\}/, "", t)
+      if (depth < 0) depth = 0
+    }')"
+shfmt_defs="$(printf '%s\n' "$shfmt_scan" | sed -n 's/^def //p')"
+shfmt_extra="$(printf '%s\n' "$shfmt_scan" | sed -n 's/^extra //p')"
+shfmt_ndefs="$(printf '%s\n' "$shfmt_defs" | grep -c .)"
+shfmt_block="$(sed -n '/^[[:space:]]*shfmt[[:space:]]*=[[:space:]]*{/,/^[[:space:]]*},/p' "$CONFORM")"
+# shellcheck disable=SC2016  # $FILENAME is conform's placeholder, not the shell's
+conform_shfmt="$(printf '%s\n' "$shfmt_block" |
+  grep -E '^[[:space:]]*(prepend_|append_)?args[[:space:]]*=' |
+  grep -oE '"[^"]*"' | tr -d '"' |
+  grep -vxE -- '-filename|\$FILENAME' | paste -sd' ' -)"
+if [ -n "$shfmt_extra" ]; then
+  bad "shfmt is given prepend_args or append_args — conform splices those around args from elsewhere (its own end in -i <shiftwidth>), shfmt takes the last -i, so they are not the flags a save runs with:"
+  printf '%s\n' "$shfmt_extra" | sed 's/^/      /'
+elif [ "${shfmt_ndefs:-0}" -gt 1 ]; then
+  bad "conform's shfmt formatter is configured in $shfmt_ndefs places — lazy merges a second spec into the first, an assignment replaces it, and load order decides:"
+  printf '%s\n' "$shfmt_defs" | sed 's/^/      /'
+elif [ "${shfmt_defs%%:*}" != "$CONFORM" ]; then
+  bad "the scan for shfmt definitions did not find the one in $CONFORM — it has gone blind, and would count a second one as none"
+elif [ -z "$lint_shfmt" ] || [ -z "$conform_shfmt" ]; then
+  bad "could not read shfmt's flags out of the Makefile's lint recipe or $CONFORM's args — the comparison would be vacuous"
+elif [ "$lint_shfmt" != "$conform_shfmt" ]; then
+  bad "'make lint' runs shfmt $lint_shfmt but format-on-save runs shfmt $conform_shfmt — a script saved in nvim fails lint"
+else
+  ok "format-on-save and 'make lint' run shfmt with the same flags ($lint_shfmt), and conform adds none of its own"
 fi
 
 section "Shell"

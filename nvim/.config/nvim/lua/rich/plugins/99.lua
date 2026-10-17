@@ -23,7 +23,11 @@ return {
         {
             "<leader>9v",
             function()
-                require("99").visual()
+                -- An empty opts table rather than none, here and in search
+                -- below. 99's annotations make opts required for both, so
+                -- lua_ls flagged each call; both functions treat nil as {}
+                -- (process_opts), so this is what they already received.
+                require("99").visual({})
             end,
             mode = "v",
             desc = "99: Visual",
@@ -39,7 +43,7 @@ return {
         {
             "<leader>9s",
             function()
-                require("99").search()
+                require("99").search({})
             end,
             desc = "99: Search",
         },
@@ -87,6 +91,12 @@ return {
                 -- custom_rules = {
                 --     "scratch/custom_rules/",
                 -- },
+                --
+                -- Empty rather than left out. 99 annotates this field as
+                -- required, so lua_ls flagged the whole completion table
+                -- without it; 99 itself puts {} in its place when it is
+                -- missing (state.lua), so this is the value it already had.
+                custom_rules = {},
 
                 --- Configure @file completion (all fields optional, sensible defaults)
                 files = {

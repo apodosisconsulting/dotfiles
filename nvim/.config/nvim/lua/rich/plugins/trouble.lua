@@ -15,16 +15,21 @@ return {
         {
             "[t",
             function()
-                local trouble = require("trouble")
-                trouble.prev({ skip_groups = true, jump = true })
+                -- trouble annotates prev and next as view actions, fun(view,
+                -- ctx), so lua_ls asked for a view and every field of one.
+                -- What require("trouble") hands out is api.lua's wrapper,
+                -- which takes opts alone: trouble's own ApiFn. The cast says
+                -- so, here and in ]t.
+                local prev_item = require("trouble").prev --[[@as trouble.ApiFn]]
+                prev_item({ skip_groups = true, jump = true })
             end,
             desc = "Trouble: Prev item",
         },
         {
             "]t",
             function()
-                local trouble = require("trouble")
-                trouble.next({ skip_groups = true, jump = true })
+                local next_item = require("trouble").next --[[@as trouble.ApiFn]]
+                next_item({ skip_groups = true, jump = true })
             end,
             desc = "Trouble: Next item",
         },

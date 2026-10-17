@@ -275,6 +275,29 @@ mutate "99 with no lazy keys, so loading at every start, is caught" "99 waits fo
 mutate "99 keys overridden by lazy = false are caught" "99 waits for its keys" \
   sed -i '' 's/^    config = function()$/    lazy = false, config = function()/' nvim/.config/nvim/lua/rich/plugins/99.lua
 
+# The defect this exists for, replayed: a library in .luarc.json replaces the
+# one lazydev sends, and vim.* loses its definitions.
+# shellcheck disable=SC2016  # ${3rd} is lua_ls's placeholder, not the shell's
+mutate "a .luarc.json that sets workspace.library again is caught" "leaves workspace.library to lazydev" \
+  sed -i '' 's|"workspace.checkThirdParty": false,|"workspace.library": ["${3rd}/luv/library"], "workspace.checkThirdParty": false,|' nvim/.config/nvim/.luarc.json
+
+# lua_ls reads the nested spelling, with a Lua. prefix, as the same key.
+mutate "the same key spelled as nested objects is caught too" "leaves workspace.library to lazydev" \
+  sed -i '' 's|"runtime.version": "LuaJIT"|"runtime.version": "LuaJIT", "Lua": {"workspace": {"library": []}}|' nvim/.config/nvim/.luarc.json
+
+# The other half of the same defect: the key that hid it. Its own assertion,
+# because it does its harm another way -- definitions resolve with it set.
+mutate "a .luarc.json that silences undefined vim again is caught" "does not declare vim a global" \
+  sed -i '' 's|"workspace.checkThirdParty": false,|"workspace.checkThirdParty": false, "diagnostics.globals": ["vim"],|' nvim/.config/nvim/.luarc.json
+
+# Every entry of the list is read, not just the first, in the nested spelling
+# too.
+mutate "vim declared a global second in a nested list is caught too" "does not declare vim a global" \
+  sed -i '' 's|"runtime.version": "LuaJIT"|"runtime.version": "LuaJIT", "Lua": {"diagnostics": {"globals": ["describe", "vim"]}}|' nvim/.config/nvim/.luarc.json
+
+mutate "a missing .luarc.json fails rather than reading as one that sets nothing" "leaves workspace.library to lazydev" \
+  rm nvim/.config/nvim/.luarc.json
+
 # The defect this exists for, replayed: 0bdf224 flipped this line inside a
 # commit about LSP errors, trailing space and all.
 mutate "line wrap flipped off is caught" "line wrap is on" \
@@ -328,6 +351,21 @@ mutate "a second vim.lsp.enable call elsewhere in the lua config is caught" "Mas
 
 mutate "an unreadable server list fails rather than passing vacuously" "Mason installs every language server" \
   sed -i '' 's/ensure_installed = {/ensure_installed_ = {/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
+
+# The defect this exists for, replayed on each half: ]q back to a bare cnext,
+# and ]d back to a hard-coded count of one.
+mutate "a ]q that ignores its count is caught" "take a count" \
+  sed -i '' "s/<cmd>exe v:count1 .. 'cnext'<cr>zz/<cmd>cnext<cr>zz/" nvim/.config/nvim/lua/rich/keymaps.lua
+
+mutate "a ]d with a hard-coded count is caught" "take a count" \
+  sed -i '' 's/count = vim\.v\.count1,/count = 1,/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
+
+# A trailing comment is not code, and must not lend the line its v:count1.
+mutate "a count named only in a trailing comment is caught" "take a count" \
+  sed -i '' "s/\"<cmd>exe v:count1 .. 'cprev'<cr>zz\",/\"<cmd>cprev<cr>zz\", -- v:count1/" nvim/.config/nvim/lua/rich/keymaps.lua
+
+mutate "no diagnostic jump to read fails rather than passing vacuously" "take a count" \
+  sed -i '' 's/vim\.diagnostic\.jump(/vim.diagnostic.goto(/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
 
 mutate_machine "a tmux.conf path that does not exist is caught" "every path the configs hardcode" \
   sed -i '' 's|~/.local/bin/tmux-clear-scrollback|~/.local/bin/does-not-exist|' tmux/.config/tmux/tmux.conf
@@ -513,6 +551,42 @@ mutate "a comment quoting a tmux.conf line that changed is caught" "line a comme
 # equal to the nothing beside it.
 mutate "a constant that cannot be read at all fails rather than comparing empty" "minimum window count" \
   sed -i '' '/^MIN_WINDOWS=/d' tmux/.local/bin/tmux-resurrect-saves
+
+# The defect this exists for, replayed: both files said -i 2 -ci, and every save
+# still re-indented to 4, because conform appends its own -i after prepend_args.
+mutate "shfmt flags passed as prepend_args are caught" "run shfmt with the same flags" \
+  sed -i '' 's/^\( *\)args = { "-i"/\1prepend_args = { "-i"/' nvim/.config/nvim/lua/rich/plugins/conform.lua
+
+mutate "make lint and format-on-save running shfmt differently is caught" "run shfmt with the same flags" \
+  sed -i '' 's/shfmt -i 2 -ci -d/shfmt -i 4 -ci -d/' Makefile
+
+# A later definition replaces the first, so reading conform.lua alone would
+# report flags format-on-save no longer uses.
+mutate "a second shfmt definition elsewhere in the lua config is caught" "run shfmt with the same flags" \
+  bash -c 'printf "\nrequire(\"conform\").formatters.shfmt = { args = { \"-i\", \"4\" } }\n" >> nvim/.config/nvim/lua/rich/keymaps.lua'
+
+# A second conform spec, which lazy deep-merges into conform.lua's opts: args
+# stay as they were, -i 4 goes after them, and a save re-indents to 4. The
+# bracketed key once hid it from the definition count entirely.
+mutate "a second conform spec merging append_args into shfmt is caught" "run shfmt with the same flags" \
+  bash -c 'printf "%s\n" "return { \"stevearc/conform.nvim\", opts = { formatters = { [\"shfmt\"] = { append_args = { \"-i\", \"4\" } } } } }" > nvim/.config/nvim/lua/rich/plugins/conform_extra.lua'
+
+# The same bracketed key with no extra args at all, so only the count sees it.
+mutate "a second shfmt definition under a bracketed key is caught" "run shfmt with the same flags" \
+  bash -c 'printf "%s\n" "return { \"stevearc/conform.nvim\", opts = { formatters = { [\"shfmt\"] = { args = { \"-i\", \"4\" } } } } }" > nvim/.config/nvim/lua/rich/plugins/conform_extra.lua'
+
+# And the other way lazy lets a spec change opts: a function that edits them.
+mutate "append_args set on shfmt from an opts function is caught" "run shfmt with the same flags" \
+  bash -c 'printf "%s\n" "return {" "    \"stevearc/conform.nvim\"," "    opts = function(_, opts)" "        opts.formatters.shfmt.append_args = { \"-i\", \"4\" }" "    end," "}" > nvim/.config/nvim/lua/rich/plugins/conform_extra.lua'
+
+# A scan that matches nothing would count no second definition anywhere. It
+# has to find conform.lua's own, or fail.
+# shellcheck disable=SC2016  # $shfmt_def is repo.sh's text, edited, not expanded
+mutate "a shfmt definition scan gone blind fails rather than counting none" "run shfmt with the same flags" \
+  sed -i '' 's/SHFMT_DEF="\$shfmt_def" xargs/SHFMT_DEF="x^" xargs/' checks/repo.sh
+
+mutate "unreadable shfmt args fail rather than passing vacuously" "run shfmt with the same flags" \
+  sed -i '' '/^ *args = { "-i"/d' nvim/.config/nvim/lua/rich/plugins/conform.lua
 
 # ---------------------------------------------------- what the repo says of itself
 

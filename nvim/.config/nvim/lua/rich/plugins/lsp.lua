@@ -17,17 +17,21 @@ return {
 
     keys = {
         { "<leader>ld", vim.diagnostic.open_float, desc = "Line diagnostics" },
+        -- vim.v.count1, not 1, so 3]d skips to the third diagnostic, as
+        -- Neovim's own ]d does. These replace those to open the float on
+        -- arrival, and a hard-coded count = 1 had made every count move one.
+        -- checks/repo.sh asserts both keep it.
         {
             "[d",
             function()
-                vim.diagnostic.jump({ count = -1, float = true })
+                vim.diagnostic.jump({ count = -vim.v.count1, float = true })
             end,
             desc = "Prev diagnostic",
         },
         {
             "]d",
             function()
-                vim.diagnostic.jump({ count = 1, float = true })
+                vim.diagnostic.jump({ count = vim.v.count1, float = true })
             end,
             desc = "Next diagnostic",
         },
@@ -155,7 +159,11 @@ return {
             -- per client, after root_dir has settled, on that client's own copy
             -- of the config, so one project's interpreter never reaches another.
             before_init = function(_, config)
-                local python = config.settings and config.settings.python
+                -- A table, from lspconfig's pyright settings. Neovim types
+                -- every settings value as any JSON value, strings included,
+                -- so lua_ls refused the pythonPath assignment below until
+                -- told; lspconfig's own pyright.lua makes the same cast.
+                local python = config.settings and config.settings.python --[[@as table?]]
                 if vim.env.VIRTUAL_ENV or not config.root_dir then
                     return
                 end

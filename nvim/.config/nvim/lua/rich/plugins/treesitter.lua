@@ -40,6 +40,14 @@ return {
                 return
             end
 
+            -- nvim-treesitter annotates setup()'s argument as TSConfig, the
+            -- type of its own internal config, in which every field is
+            -- required; lua_ls flagged this call for leaving out modules,
+            -- sync_install and ignore_install. setup() defaults the last two,
+            -- and modules is not a setting at all: it is the table setup()
+            -- merges this one into, so a modules key here would become a
+            -- module of that name. Hence a suppression, not the fields.
+            ---@diagnostic disable-next-line: missing-fields
             configs.setup({
                 ensure_installed = {
                     "lua",
