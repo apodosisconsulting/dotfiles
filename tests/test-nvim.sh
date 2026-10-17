@@ -682,6 +682,10 @@ if web_server WEB_HTML html; then
   assert "html attaches to a .html file" contains "$out" "WEB_HTML_ATTACHED=true"
   assert "...and completes an element name" contains "$out" "WEB_HTML_COMPLETES_ELEMENT=true"
 fi
+if web_server WEB_EMMET emmet_language_server; then
+  assert "emmet_language_server attaches to a .html file" contains "$out" "WEB_EMMET_ATTACHED=true"
+  assert "...and offers ul>li.item*3 expanded, as a completion" contains "$out" "WEB_EMMET_EXPANDS=true"
+fi
 # The tokens vanish as a set when the probe dies; say what nvim said instead.
 if ! contains "$out" "WEB_PROBE_DONE=true"; then
   no "the web language server probe did not run to the end"

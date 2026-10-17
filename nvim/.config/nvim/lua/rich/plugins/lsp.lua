@@ -107,6 +107,7 @@ return {
                 "eslint",
                 "html",
                 "cssls",
+                "emmet_language_server",
                 "jsonls",
                 "clangd",
                 "yamlls",
@@ -255,11 +256,15 @@ return {
         -- .js a sibling module created after the file was opened still
         -- completes (measured). eslint starts only for a file under an eslint
         -- config, and lints with the eslint that project installed. cssls also
-        -- covers scss and less.
+        -- covers scss and less. emmet_language_server offers the expansion of
+        -- an Emmet abbreviation as a completion, so ul>li.item*3 typed in HTML
+        -- becomes the list from the menu, and m10 in CSS becomes margin: 10px;
+        -- it runs beside html and cssls, in their filetypes and JSX's.
         vim.lsp.config.ts_ls = { capabilities = capabilities }
         vim.lsp.config.eslint = { capabilities = capabilities }
         vim.lsp.config.cssls = { capabilities = capabilities }
         vim.lsp.config.html = { capabilities = capabilities }
+        vim.lsp.config.emmet_language_server = { capabilities = capabilities }
 
         vim.lsp.config.jsonls = { capabilities = capabilities }
         vim.lsp.config.clangd = { capabilities = capabilities }
@@ -286,6 +291,7 @@ return {
             "eslint",
             "html",
             "cssls",
+            "emmet_language_server",
             "jsonls",
             "clangd",
             "gopls",
