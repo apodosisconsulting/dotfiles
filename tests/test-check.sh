@@ -296,6 +296,22 @@ mutate "the clipboard changed again elsewhere in the lua config is caught" "nvim
 mutate "an unreadable clipboard setting fails rather than passing vacuously" "nvim uses the system clipboard" \
   sed -i '' '/^vim\.opt\.clipboard/d' nvim/.config/nvim/lua/rich/options.lua
 
+# A server started and never installed: here it works, on a new machine it
+# never attaches. Only the ensure_installed copy of the name goes.
+mutate "a language server lsp.lua starts but Mason never installs is caught" "Mason installs every language server" \
+  sed -i '' '/ensure_installed = {/,/}/{/"phpactor",/d;}' nvim/.config/nvim/lua/rich/plugins/lsp.lua
+
+# The reverse: installed, and running only because automatic_enable is on.
+mutate "a language server Mason installs but lsp.lua never starts is caught" "Mason installs every language server" \
+  sed -i '' '/vim\.lsp\.enable({/,/})/{/"cssls",/d;}' nvim/.config/nvim/lua/rich/plugins/lsp.lua
+
+# Last write wins: a second call elsewhere can turn a listed server off.
+mutate "a second vim.lsp.enable call elsewhere in the lua config is caught" "Mason installs every language server" \
+  bash -c 'printf "\nvim.lsp.enable(\"cssls\", false)\n" >> nvim/.config/nvim/lua/rich/keymaps.lua'
+
+mutate "an unreadable server list fails rather than passing vacuously" "Mason installs every language server" \
+  sed -i '' 's/ensure_installed = {/ensure_installed_ = {/' nvim/.config/nvim/lua/rich/plugins/lsp.lua
+
 mutate_machine "a tmux.conf path that does not exist is caught" "every path the configs hardcode" \
   sed -i '' 's|~/.local/bin/tmux-clear-scrollback|~/.local/bin/does-not-exist|' tmux/.config/tmux/tmux.conf
 

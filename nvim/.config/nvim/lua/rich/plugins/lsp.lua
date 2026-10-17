@@ -51,13 +51,22 @@ return {
     config = function()
         local capabilities = require("cmp_nvim_lsp").default_capabilities()
 
-        -- Mason auto-installs these servers on first run
+        -- Mason auto-installs these servers on first run. They are the names
+        -- vim.lsp.enable starts at the bottom of this function, bar
+        -- rust_analyzer, which comes from rustup. checks/repo.sh holds the two
+        -- lists together: a server enabled but never installed just never
+        -- attaches on a new machine, and one installed but never enabled runs
+        -- only while mason-lspconfig's automatic_enable happens to be on.
         require("mason-lspconfig").setup({
             ensure_installed = {
                 "gopls",
                 "lua_ls",
                 "pyright",
                 "ts_ls",
+                "eslint",
+                "html",
+                "cssls",
+                "phpactor",
                 "jsonls",
                 "clangd",
                 "yamlls",
@@ -85,6 +94,40 @@ return {
             },
         }
 
+        -- A root_dir for a server that needs one in a folder of loose files,
+        -- where none of lspconfig's markers for it are found: the file's own
+        -- folder. pyright and phpactor each need it, for reasons given at each.
+        local function marker_or_own_folder(server)
+            return function(bufnr, on_dir)
+                -- Read off the merged config rather than copied here, so the
+                -- list stays lspconfig's across a :Lazy update.
+                local root = vim.fs.root(bufnr, vim.lsp.config[server].root_markers)
+                if root then
+                    on_dir(root)
+                    return
+                end
+
+                -- Never ~ or /: both servers index everything under their root.
+                -- An unnamed buffer, or a folder that does not exist yet, has no
+                -- realpath and no root either. on_dir(nil) hands the choice back
+                -- to vim.lsp.start, which looks for the markers itself and finds
+                -- none: pyright then runs without a root, as it did before, and
+                -- phpactor, which lspconfig marks workspace_required, does not
+                -- start. Not calling on_dir at all would leave the buffer with
+                -- neither. realpath on both sides, because nvim resolves symlinks
+                -- in buffer names on macOS and $HOME need be neither resolved nor
+                -- slash-free.
+                local name = vim.api.nvim_buf_get_name(bufnr)
+                local dir = name ~= "" and vim.fs.dirname(name) or nil
+                local real = dir and vim.uv.fs_realpath(dir)
+                if not real or real == "/" or real == vim.uv.fs_realpath(vim.fs.normalize("~")) then
+                    on_dir(nil)
+                    return
+                end
+                on_dir(dir)
+            end
+        end
+
         -- pyright needs two things lspconfig does not give it: a root in a folder
         -- with no project marker, and the project's venv when none is activated.
         -- tests/test-nvim.sh exercises both against a running pyright.
@@ -100,33 +143,8 @@ return {
             -- intermittent, but it was never told about a stats.py created after
             -- it started, or changed outside this nvim: the import stayed "could
             -- not be resolved", and `stats.` completed nothing new, until nvim
-            -- restarted. The file's own folder is the fallback root.
-            root_dir = function(bufnr, on_dir)
-                -- Read off the merged config rather than copied here, so the
-                -- list stays lspconfig's across a :Lazy update.
-                local root = vim.fs.root(bufnr, vim.lsp.config.pyright.root_markers)
-                if root then
-                    on_dir(root)
-                    return
-                end
-
-                -- Never ~ or /: pyright indexes everything under its root. An
-                -- unnamed buffer, or a folder that does not exist yet, has no
-                -- realpath and no root either. on_dir(nil) still starts the
-                -- server -- vim.lsp.start looks for the markers itself, finds
-                -- none, and runs without a root as before -- where not calling
-                -- on_dir at all would leave the buffer with no pyright. realpath
-                -- on both sides, because nvim resolves symlinks in buffer names
-                -- on macOS and $HOME need be neither resolved nor slash-free.
-                local name = vim.api.nvim_buf_get_name(bufnr)
-                local dir = name ~= "" and vim.fs.dirname(name) or nil
-                local real = dir and vim.uv.fs_realpath(dir)
-                if not real or real == "/" or real == vim.uv.fs_realpath(vim.fs.normalize("~")) then
-                    on_dir(nil)
-                    return
-                end
-                on_dir(dir)
-            end,
+            -- restarted.
+            root_dir = marker_or_own_folder("pyright"),
 
             -- pyright has no venv discovery of its own. With no pythonPath it
             -- runs the first python3 on PATH, which outside an activated venv is
@@ -174,7 +192,32 @@ return {
             },
         }
 
+        -- JavaScript, CSS and HTML need nothing beyond lspconfig's defaults.
+        -- ts_ls falls back to the cwd for a root, and that is enough: tsserver
+        -- resolves and watches a file's imports itself, so in a folder of loose
+        -- .js a sibling module created after the file was opened still
+        -- completes (measured). eslint starts only for a file under an eslint
+        -- config, and lints with the eslint that project installed. cssls also
+        -- covers scss and less.
         vim.lsp.config.ts_ls = { capabilities = capabilities }
+        vim.lsp.config.eslint = { capabilities = capabilities }
+        vim.lsp.config.cssls = { capabilities = capabilities }
+        vim.lsp.config.html = { capabilities = capabilities }
+
+        -- phpactor, for PHP. lspconfig marks it workspace_required, with .git,
+        -- composer.json and .phpactor.json/.yml as the markers, so in a folder
+        -- of loose .php files -- which is how PHP usually starts -- phpactor
+        -- never started at all: no completion, no diagnostics, and nothing to
+        -- say why. Rooted at the file's own folder instead, `$g->` completes
+        -- greet() from the Greeter.php beside it, and an undefined variable is
+        -- flagged. A .php directly in ~ still gets no phpactor, deliberately.
+        -- tests/test-nvim.sh checks both. phpactor is a PHP program, run by the
+        -- php first on PATH, which bootstrap.sh installs.
+        vim.lsp.config.phpactor = {
+            capabilities = capabilities,
+            root_dir = marker_or_own_folder("phpactor"),
+        }
+
         vim.lsp.config.jsonls = { capabilities = capabilities }
         vim.lsp.config.clangd = { capabilities = capabilities }
         vim.lsp.config.gopls = { capabilities = capabilities }
@@ -197,6 +240,10 @@ return {
             "pyright",
             "rust_analyzer",
             "ts_ls",
+            "eslint",
+            "html",
+            "cssls",
+            "phpactor",
             "jsonls",
             "clangd",
             "gopls",

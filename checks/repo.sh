@@ -24,6 +24,7 @@ GUARD="tmux/.local/bin/tmux-resurrect-guard"
 SAVES="tmux/.local/bin/tmux-resurrect-saves"
 TMUXCONF="tmux/.config/tmux/tmux.conf"
 OPTIONS="nvim/.config/nvim/lua/rich/options.lua"
+LSP="nvim/.config/nvim/lua/rich/plugins/lsp.lua"
 
 # The value tmux.conf sets an option to:  set -g @option 'value'
 tmux_setting() { # $1 = option name
@@ -88,6 +89,13 @@ nvim_opt() { # $1 = option name
   line="${line#*=}"
   line="${line%%--*}"
   printf '%s' "$(printf '%s' "$line" | tr -d '[:space:]')"
+}
+
+# The server names in one of lsp.lua's lists, one per line, sorted. $1 is a sed
+# address range that selects the list; comment lines inside it are skipped, so
+# a server commented out is a server not listed.
+lsp_list() { # $1 = sed address range
+  sed -n "$1p" "$LSP" | grep -vE '^[[:space:]]*--' | grep -oE '"[a-z_]+"' | tr -d '"' | sort -u
 }
 
 section "Lua config"
@@ -250,6 +258,39 @@ elif [ -n "$otherclip" ]; then
   printf '%s\n' "$otherclip" | sed 's/^/      /'
 else
   ok "nvim uses the system clipboard (clipboard=unnamedplus) and nothing in the lua config changes it"
+fi
+
+# Every language server Mason installs is one lsp.lua starts, and the reverse.
+#
+# They are two lists in lsp.lua with nothing holding them together. A server
+# added to vim.lsp.enable and not to ensure_installed works on this machine,
+# where Mason already has it, and on a new one never attaches. A server added
+# only to ensure_installed runs because mason-lspconfig's automatic_enable
+# starts whatever Mason has installed, and stops the day that is turned off.
+# Neither says so: the buffer just has no language server. rust_analyzer may
+# be on the enable side alone, because it comes from rustup, not Mason.
+#
+# One vim.lsp.enable call, too: lua's last write wins, so a second one anywhere
+# in the config -- vim.lsp.enable(name, false) turns a server off -- would make
+# the list compared here not the whole story.
+lsp_installed="$(lsp_list '/ensure_installed = {/,/}/')"
+lsp_enabled="$(lsp_list '/vim\.lsp\.enable({/,/})/')"
+lsp_calls="$(grep -rnE 'vim\.lsp\.enable\(' nvim/.config/nvim --include='*.lua' |
+  grep -cvE '^[^:]*:[0-9]+:[[:space:]]*--')"
+lsp_only_enabled="$(comm -13 <(printf '%s\n' "$lsp_installed") <(printf '%s\n' "$lsp_enabled") |
+  grep -vx rust_analyzer | paste -sd, -)"
+lsp_only_installed="$(comm -23 <(printf '%s\n' "$lsp_installed") <(printf '%s\n' "$lsp_enabled") |
+  paste -sd, -)"
+if [ -z "$lsp_installed" ] || [ -z "$lsp_enabled" ]; then
+  bad "could not read ensure_installed or vim.lsp.enable out of $LSP — the comparison would be vacuous"
+elif [ -n "$lsp_only_enabled" ]; then
+  bad "$LSP starts $lsp_only_enabled but Mason never installs it, so on a new machine it never attaches"
+elif [ -n "$lsp_only_installed" ]; then
+  bad "Mason installs $lsp_only_installed but $LSP never starts it, so it runs only while automatic_enable is on"
+elif [ "${lsp_calls:-0}" -ne 1 ]; then
+  bad "the nvim config calls vim.lsp.enable ${lsp_calls:-0} times, not once, so lsp.lua's list is not the whole story"
+else
+  ok "Mason installs every language server lsp.lua starts, and lsp.lua starts all $(printf '%s\n' "$lsp_installed" | grep -c .) it installs"
 fi
 
 section "tmux config"
