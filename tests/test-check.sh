@@ -320,6 +320,19 @@ mutate "a later y rebinding with its own command is caught" "tmux copies to and 
 mutate "a prefix ] that never reads pbpaste is caught" "tmux copies to and pastes from" \
   sed -i '' 's/^bind \] run-shell "pbpaste | /bind ] run-shell "cat \/dev\/null | /' tmux/.config/tmux/tmux.conf
 
+# The defect this exists for: status-right set after tpm runs, overwriting
+# continuum's #(), so auto-save stops without a word.
+mutate "status-right moved below the tpm run line is caught" "status-right is set before tpm runs" \
+  bash -c "sed -i '' '/^set -g status-right /d' tmux/.config/tmux/tmux.conf && printf '\nset -g status-right \"x\"\n' >> tmux/.config/tmux/tmux.conf"
+
+# The last write wins, so a second status-right below tpm does the damage even
+# while the first still sits above it.
+mutate "a second status-right below the tpm run line is caught" "status-right is set before tpm runs" \
+  bash -c "printf '\nset -g status-right \"x\"\n' >> tmux/.config/tmux/tmux.conf"
+
+mutate "no status-right to read fails rather than passing vacuously" "status-right is set before tpm runs" \
+  sed -i '' '/^set -g status-right /d' tmux/.config/tmux/tmux.conf
+
 # The defect this exists for: tpm back in the foreground, so every new server
 # and every prefix S waits for all the plugins to load.
 mutate "tpm run without -b is caught" "tpm loads in the background" \

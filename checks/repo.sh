@@ -716,11 +716,15 @@ fi
 # continuum's addition, every automatic save stops, and there is no error and no
 # missing file to notice — the save directory just quietly stops growing.
 #
-# Line numbers, because ordering is the whole point.
-sr_line="$(grep -n '^[[:space:]]*set .*status-right' tmux/.config/tmux/tmux.conf | head -1 | cut -d: -f1)"
+# Line numbers, because ordering is the whole point. The LAST status-right, as
+# for every option here: it was the first, so a second one appended below tpm
+# -- the one that does the damage -- passed, because the first still sat above.
+# And neither line found is a failure, not a skip: a check that quietly stops
+# running is the shape this file exists to catch.
+sr_line="$(grep -n '^[[:space:]]*set .*status-right' tmux/.config/tmux/tmux.conf | tail -n 1 | cut -d: -f1)"
 tpm_line="$(grep -n "^[[:space:]]*run .*tpm" tmux/.config/tmux/tmux.conf | tail -1 | cut -d: -f1)"
 if [ -z "$sr_line" ] || [ -z "$tpm_line" ]; then
-  meh "could not locate both status-right and the tpm run line; skipping the ordering check"
+  bad "could not locate both status-right and the tpm run line in tmux.conf — whether continuum's auto-save survives cannot be said"
 elif [ "$sr_line" -lt "$tpm_line" ]; then
   ok "status-right is set before tpm runs, so continuum's auto-save survives"
 else
