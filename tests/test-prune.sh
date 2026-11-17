@@ -36,7 +36,13 @@ mk 20260804T085917 13
 mk 20260804T185859 1
 mk 20260805T073237 15
 ln -sfn tmux_resurrect_20260805T073237.txt "$W/last"
-KA=0 run prune --apply >/dev/null 2>&1
+# KD is set, to a window no fixture here will ever fall out of. The case is
+# about which save of a day survives, which only saves inside the daily window
+# are asked. Left at this suite's default, the window closed on these August
+# stamps once they were older than it: from then on every save of that day was
+# simply too old, the real one went with the rest, and the first assertion
+# failed on a tool that had not changed.
+KA=0 KD=36500 run prune --apply >/dev/null 2>&1
 assert "the day's last REAL save survives a later degenerate one" have 20260804T085917
 refute "the degenerate save is gone" have 20260804T185859
 refute "earlier same-day saves are still thinned" have 20260804T082917
