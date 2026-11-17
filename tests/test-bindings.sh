@@ -43,11 +43,13 @@ rm -f "$MARKER_FILE"
 
 # tpm removed: it clones plugins, and continuum would auto-save and auto-restore
 # against whatever directory it found. Everything else in the file is real. The
-# run line is matched with or without the -b tmux.conf gives it.
+# run line is matched with or without the -b tmux.conf gives it, and whatever
+# its command does before it reaches tpm (it tests that tpm is there). The `if`
+# that clones tpm is matched by its test's first words, in either quote.
 awk '
-  /^if "test ! -d ~\/\.config\/tmux\/plugins\/tpm"/ { skip = 2; next }
+  /^if .test ! -d ~\/\.config\/tmux\/plugins\/tpm / { skip = 2; next }
   skip > 0 { skip--; next }
-  /^run (-b )?.~\/\.config\/tmux\/plugins\/tpm\/tpm./ { next }
+  /^run (-b )?.*\/plugins\/tpm\/tpm.$/ { next }
   { print }
 ' "$CONF" >"$TEST_CONF"
 
@@ -55,9 +57,16 @@ awk '
 # to the run line was enough to stop the old pattern matching it: the line
 # would have stayed in, and this suite would have loaded the real plugins
 # against the real HOME -- the exact thing the strip exists to prevent. So stop
-# before a server starts.
+# before a server starts. The clone is looked for as well: its `if` gained a
+# second condition, which is the same kind of change, and a line that survived
+# would have a test server cloning tpm wherever it is missing.
 if grep -qE '^[[:space:]]*run(-shell)?[[:space:]].*tpm/tpm' "$TEST_CONF"; then
   no "tpm's run line survived the strip, so the test server would load the real plugins"
+  finish
+  exit 1
+fi
+if grep -qE 'git clone' "$TEST_CONF"; then
+  no "the line that clones tpm survived the strip, so the test server could fetch it"
   finish
   exit 1
 fi

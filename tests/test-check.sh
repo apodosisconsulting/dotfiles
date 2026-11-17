@@ -297,18 +297,23 @@ mutate_machine "no rows read out of WezTerm's key table fails rather than passin
 
 # The defect this exists for: Enter and a mouse drag copying into tmux's own
 # buffer, which is a second clipboard.
+#
+# copy-command and the prefix ] binding sit inside tmux.conf's `if-shell
+# 'command -v pbcopy'` block, indented, so the four patterns that name them
+# allow leading spaces. Anchored at column 0 they matched nothing, and a
+# mutation that changes nothing is reported as a defect the check missed.
 mutate "no copy-command, so a tmux copy stays in tmux, is caught" "tmux copies to and pastes from" \
-  sed -i '' '/^set -s copy-command/d' tmux/.config/tmux/tmux.conf
+  sed -i '' '/^ *set -s copy-command/d' tmux/.config/tmux/tmux.conf
 
 mutate "a copy-command other than pbcopy is caught" "tmux copies to and pastes from" \
-  sed -i '' "s/^set -s copy-command 'pbcopy'$/set -s copy-command 'cat'/" tmux/.config/tmux/tmux.conf
+  sed -i '' "s/^\( *\)set -s copy-command 'pbcopy'$/\1set -s copy-command 'cat'/" tmux/.config/tmux/tmux.conf
 
 # A command after copy-pipe-and-cancel overrides copy-command for that key.
 mutate "a y binding with its own pipe command is caught" "tmux copies to and pastes from" \
   sed -i '' 's/^bind -T copy-mode-vi y send-keys -X copy-pipe-and-cancel$/bind -T copy-mode-vi y send-keys -X copy-pipe-and-cancel "cat >\/dev\/null"/' tmux/.config/tmux/tmux.conf
 
 mutate "prefix ] left on tmux's own buffer is caught" "tmux copies to and pastes from" \
-  sed -i '' '/^bind \] /d' tmux/.config/tmux/tmux.conf
+  sed -i '' '/^ *bind \] /d' tmux/.config/tmux/tmux.conf
 
 # Last write wins in tmux.conf too: a later override is the one tmux applies.
 mutate "a later copy-command overriding pbcopy is caught" "tmux copies to and pastes from" \
@@ -318,7 +323,7 @@ mutate "a later y rebinding with its own command is caught" "tmux copies to and 
   bash -c "printf '\nbind -T copy-mode-vi y send-keys -X copy-pipe-and-cancel \"cat\"\n' >> tmux/.config/tmux/tmux.conf"
 
 mutate "a prefix ] that never reads pbpaste is caught" "tmux copies to and pastes from" \
-  sed -i '' 's/^bind \] run-shell "pbpaste | /bind ] run-shell "cat \/dev\/null | /' tmux/.config/tmux/tmux.conf
+  sed -i '' 's/^\( *\)bind \] run-shell "pbpaste | /\1bind ] run-shell "cat \/dev\/null | /' tmux/.config/tmux/tmux.conf
 
 # The defect this exists for: status-right set after tpm runs, overwriting
 # continuum's #(), so auto-save stops without a word.
@@ -334,9 +339,10 @@ mutate "no status-right to read fails rather than passing vacuously" "status-rig
   sed -i '' '/^set -g status-right /d' tmux/.config/tmux/tmux.conf
 
 # The defect this exists for: tpm back in the foreground, so every new server
-# and every prefix S waits for all the plugins to load.
+# and every prefix S waits for all the plugins to load. The line's command
+# tests for tpm before running it, so the pattern keeps whatever follows -b.
 mutate "tpm run without -b is caught" "tpm loads in the background" \
-  sed -i '' "s|^run -b '~/.config/tmux/plugins/tpm/tpm'$|run '~/.config/tmux/plugins/tpm/tpm'|" tmux/.config/tmux/tmux.conf
+  sed -i '' "s|^run -b \(.*plugins/tpm/tpm'\)$|run \1|" tmux/.config/tmux/tmux.conf
 
 # tmux applies every run line, so one in the foreground is a wait however many
 # backgrounded ones there are.
