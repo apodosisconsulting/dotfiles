@@ -785,6 +785,18 @@ mutate "a shell script with no shebang is caught, because lint would skip it" "d
 mutate "CI no longer running the linters is caught" "CI runs 'make lint'" \
   sed -i '' 's/^        run: make lint$/        run: true/' .github/workflows/ci.yml
 
+# bootstrap.sh's Linux branch never runs on a Mac, so the server job is the
+# only thing that executes it. Three ways for that to stop without a word: the
+# step goes, the step stays as a comment, or the script it runs is gone.
+mutate "CI no longer running the Linux server test is caught" "CI runs tests/linux-server.sh" \
+  sed -i '' 's|^        run: bash tests/linux-server.sh .*$|        run: true|' .github/workflows/ci.yml
+
+mutate "the Linux server test left only in a comment is caught" "CI runs tests/linux-server.sh" \
+  sed -i '' 's|^        run: bash tests/linux-server.sh |        # run: bash tests/linux-server.sh |' .github/workflows/ci.yml
+
+mutate "a Linux server test that is no longer in the repo is caught" "CI runs tests/linux-server.sh" \
+  git rm -q tests/linux-server.sh
+
 # The defect this exists for: CI priming with sync, which updates every plugin
 # past the lock before the suites run.
 mutate "CI priming the plugins with sync is caught" "at the commits lazy-lock.json pins" \

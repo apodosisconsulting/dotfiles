@@ -196,6 +196,95 @@ install_hooks() {
     warn "Could not set core.hooksPath (run 'make hooks' later)"
 }
 
+# A fresh cloud server hands you root, or a user with sudo. Root needs nothing
+# in front of a command, and a stock Debian image has no sudo for it to use.
+as_root() {
+  if [[ $EUID -eq 0 ]]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+install_linux() {
+  # What a hosting server gets: zsh, tmux and git, set up as on the Mac, from
+  # apt alone. No Neovim, whose config assumes the Mac's toolchain around it (a
+  # current Neovim, node, go, a compiler), no tmux plugins, no git hooks, and
+  # nothing fetched from anywhere but the distribution's own archive. Debian
+  # and Ubuntu, because every package name and path below is theirs.
+  # tests/linux-server.sh runs this on a fresh one of each and checks what it
+  # built; CI does that on every push.
+  command -v apt-get >/dev/null 2>&1 ||
+    die "On Linux this script supports Debian and Ubuntu only: there is no apt-get here."
+  [[ $EUID -eq 0 ]] || need_cmd sudo
+
+  # The two zsh plugins are the ones .zshrc sources from /usr/share, and
+  # locales is what provides locale-gen. The lock timeout is for a server in
+  # its first minutes, when unattended-upgrades holds dpkg's lock: apt-get
+  # then waits for it instead of failing at once.
+  local pkgs=(zsh tmux git stow fzf locales zsh-autosuggestions zsh-syntax-highlighting)
+  log "Installing packages: ${pkgs[*]}"
+  as_root apt-get update
+  as_root env DEBIAN_FRONTEND=noninteractive \
+    apt-get -o DPkg::Lock::Timeout=300 install -y "${pkgs[@]}"
+
+  # The stowed git config sets merge.conflictstyle to zdiff3, which arrived in
+  # git 2.35. An older git does not ignore the value: it dies on it, in every
+  # checkout and every merge, and a diff3 in ~/.gitconfig does not rescue it,
+  # because git stops at the first file that says zdiff3 (tried, on Ubuntu
+  # 22.04, whose git is 2.34). So a release that old is refused here, before
+  # anything is linked, rather than left with a git that cannot switch branch.
+  # sort -C -V succeeds when the two are in version order, 2.35 first.
+  local git_version
+  git_version="$(git version | awk '{ print $3 }')"
+  printf '%s\n' 2.35 "$git_version" | sort -C -V ||
+    die "git here is $git_version, and this repo's git config needs 2.35 or newer. The packages are installed; nothing was linked."
+
+  # The locale .zshrc sets, read from it so the two cannot disagree. The base
+  # images this is tested on have generated C.UTF-8 and nothing else, and the
+  # Mac's ssh sends its LANG along as well, so without this perl warns that
+  # setting the locale failed every time it runs, and it is not the only thing
+  # that looks. The line is uncommented in /etc/locale.gen rather than built
+  # with localedef, so the next locale-gen run keeps it.
+  # `locale -a` spells it en_GB.utf8. grep reads to the end rather than
+  # stopping at a match (no -q): with pipefail, a writer cut off mid-list
+  # would turn "found" into a failed pipeline.
+  local lang listed
+  lang="$(sed -n 's/^export LANG="\(.*\)"$/\1/p' "$DOTFILES_DIR/zsh/.zshrc")"
+  listed="${lang/UTF-8/utf8}"
+  if [[ -z "$lang" ]]; then
+    warn "Read no LANG out of zsh/.zshrc, so no locale was generated"
+  elif ! locale -a | grep -ixF "$listed" >/dev/null; then
+    log "Generating the $lang locale"
+    as_root sed -i "s/^# *\($lang \)/\1/" /etc/locale.gen
+    as_root locale-gen
+    locale -a | grep -ixF "$listed" >/dev/null ||
+      warn "Could not generate $lang (is it listed in /etc/locale.gen?)"
+  fi
+
+  # Three packages, not the Mac's seven. nvim and wezterm configure programs
+  # that are not installed here, and starship and home (the formatter configs)
+  # likewise. The same mkdir as stow_packages, for the same reason: without it
+  # stow folds the whole of .local into one link into this repo.
+  log "Stowing zsh, tmux and git"
+  mkdir -p "$HOME/.local/bin" "$HOME/.config"
+  cd "$DOTFILES_DIR"
+  stow -R -t "$HOME" zsh tmux git
+
+  # The login shell of whoever ran this. Through as_root, because chsh run by
+  # root asks for no password and the first user of a cloud image often has
+  # none to give.
+  local zsh_path user
+  zsh_path="$(command -v zsh)"
+  user="$(id -un)"
+  if [[ "$(getent passwd "$user" | cut -d: -f7)" != "$zsh_path" ]]; then
+    log "Making zsh the login shell of $user"
+    as_root chsh -s "$zsh_path" "$user"
+  fi
+
+  log "OK: zsh, tmux and git are set up. Log in again, or run: exec zsh -l"
+}
+
 post_checks() {
   log "Post-checks (fail fast)"
 
@@ -222,7 +311,14 @@ post_checks() {
 }
 
 main() {
-  is_macos || die "This script currently supports macOS only."
+  # Anything that is not a Mac gets the server setup and nothing below it.
+  # Returned from here, rather than the Mac's steps nested in an else, so
+  # every line under this one is still a step of the Mac's setup and
+  # checks/repo.sh can go on reading main() as that list.
+  if ! is_macos; then
+    install_linux
+    return
+  fi
 
   install_homebrew_macos
   need_cmd brew

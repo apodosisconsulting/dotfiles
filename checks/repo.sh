@@ -2070,9 +2070,22 @@ else
     fi
   done
   if grep -qE '^[[:space:]]*runs-on: macos' "$CI"; then
-    ok "CI runs on macOS, which is the only platform bootstrap.sh supports"
+    ok "CI runs on macOS, which is where the full setup and these suites run"
   else
     bad "CI does not run on macOS, so it cannot exercise this repo honestly"
+  fi
+  # bootstrap.sh's other half sets up a Debian or Ubuntu server, and no Mac
+  # ever executes it: is_macos sends this laptop, and the job above, down the
+  # Mac's branch. tests/linux-server.sh runs it on a fresh container and checks
+  # what it built, and CI's server job is the only thing that runs that. So the
+  # script has to be tracked and a step has to run it. Comment lines are
+  # dropped, so the comment describing the job cannot stand in for the step.
+  if ! git ls-files --error-unmatch tests/linux-server.sh >/dev/null 2>&1; then
+    bad "tests/linux-server.sh is not tracked — nothing checks what bootstrap.sh builds on a server"
+  elif grep -vE '^[[:space:]]*#' "$CI" | grep -E '^[[:space:]]*run: .*tests/linux-server\.sh' >/dev/null; then
+    ok "CI runs tests/linux-server.sh, the only place bootstrap.sh's Linux branch is executed"
+  else
+    bad "CI does not run tests/linux-server.sh — bootstrap.sh's Linux branch is executed nowhere"
   fi
   # The plugins CI tests have to be the ones lazy-lock.json pins, which is what
   # a fresh machine gets. CI primed them with `Lazy! sync`, and sync runs

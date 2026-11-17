@@ -38,6 +38,28 @@ Settings for one machine only go in ~/.zshrc.local, which .zshrc runs last and
 git never sees. A ~/.gitconfig wins over the repo's git config key by key, and
 `make check` names any key it overrides.
 
+### On a Linux server
+
+On a new Debian or Ubuntu server the same script does a smaller job: zsh with
+its plugins and fzf, tmux, and git, each configured as it is on the Mac, from
+the distribution's own packages. As root:
+
+```sh
+apt-get update && apt-get install -y git
+git clone https://github.com/apodosisconsulting/dotfiles && ./dotfiles/bootstrap.sh
+```
+
+A user with sudo puts `sudo` before both `apt-get` commands and runs the second
+line as it is. Log in again afterwards: zsh is now the login shell.
+
+That is all a server gets. No Neovim, no tmux plugins and so no saved sessions,
+and nothing downloaded from outside the distribution's archive. Over ssh the
+prompt names the user and the host. `tests/linux-server.sh` runs the script on a
+fresh container of each release the `server` job in `.github/workflows/ci.yml`
+lists, as root and as a user with sudo, and checks what it built. A release
+whose git is older than 2.35 is refused before anything is linked, because the
+git config here stops such a git from switching branch.
+
 ## Key tmux bindings
 
 Prefix is `Ctrl-a`.
