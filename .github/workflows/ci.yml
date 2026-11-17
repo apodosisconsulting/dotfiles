@@ -11,10 +11,11 @@ on:
 
 jobs:
   checks:
-    # macOS because these dotfiles are macOS-only — bootstrap.sh says so and
-    # exits on anything else. A Linux runner would need every assertion about
-    # WezTerm, fonts and Homebrew paths weakened to pass, which would make the
-    # checks weaker everywhere to serve a platform nobody runs this on.
+    # macOS because the full setup is the Mac's: WezTerm, the fonts, Homebrew's
+    # paths, Neovim and its language servers. These checks and suites are about
+    # that, and a Linux runner would need every one of those assertions
+    # weakened to pass. What bootstrap.sh builds on a Linux server is a
+    # different, smaller thing, and the server job below checks it there.
     runs-on: macos-latest
 
     steps:
@@ -88,3 +89,31 @@ jobs:
 
       - name: Test suites
         run: make test
+
+  server:
+    # What bootstrap.sh builds on a Debian or Ubuntu server. The job above
+    # cannot say: on a Mac that half of the script never runs. Each cell is a
+    # stock image of one release, as root with no sudo installed, which is how
+    # Debian hands a server over, or as a new user who has sudo.
+    # tests/linux-server.sh runs bootstrap.sh there and checks the shell, tmux
+    # and git it leaves behind.
+    #
+    # ubuntu:22.04 is the release bootstrap.sh refuses, its git being too old
+    # for the git config here. The test checks the refusal instead: that it is
+    # made for that reason, and that nothing is left half linked.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:12", "debian:13", "ubuntu:24.04", "ubuntu:26.04"]
+        account: [root, user]
+        include:
+          - image: "ubuntu:22.04"
+            account: root
+    container: ${{ matrix.image }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up a fresh server and check what it built
+        run: bash tests/linux-server.sh --as-${{ matrix.account }}

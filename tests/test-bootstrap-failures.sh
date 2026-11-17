@@ -9,7 +9,8 @@
 # an assumption about the tools, not about this script. It is checked here.
 #
 # Nothing installs anything: $HOME is a throwaway directory and only
-# stow_packages() and post_checks() are called.
+# stow_packages() and post_checks() are called, and once main(), with a PATH
+# that has no command on it for main() to run.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -115,12 +116,43 @@ fi
 
 echo
 echo "== the macOS gate =="
-# bootstrap installs Homebrew and brew packages; on anything else it must refuse
-# at the top rather than fail somewhere in the middle with a confusing error.
+# Only a Mac gets Homebrew and the brew packages. Anything else is handed to
+# install_linux at the top of main(), rather than failing somewhere in the
+# middle of the Mac's steps with a confusing error.
 # is_macos is the REAL one, sourced above — not a copy that could drift from it.
 gate() { (OSTYPE="$1" && is_macos); }
 assert "darwin passes the gate" gate darwin24
 refute "linux does not" gate linux-gnu
 refute "and neither does an unset OSTYPE" gate ""
+
+echo
+echo "== a machine that is not a Mac never reaches the Mac's steps =="
+# main() itself, told it is on Linux. What install_linux then does on a real
+# server is tests/linux-server.sh's business, in a container; here the question
+# is only which way main() goes, on the machine where going the wrong way would
+# start installing things. So PATH is an empty directory: install_linux looks
+# for apt-get before it does anything, finds none, and refuses by name. And the
+# Mac's first step is replaced by a marker, so a main() that fell through to it
+# says so instead of fetching Homebrew.
+H="$(fake_home notamac)"
+mkdir -p "$TEST_TMP/no-commands"
+out="$(
+  (
+    # shellcheck disable=SC2329  # main() is what calls it, were it to get that far
+    install_homebrew_macos() {
+      echo "FELL THROUGH to the Mac's setup"
+      exit 3
+    }
+    OSTYPE=linux-gnu
+    HOME="$H"
+    # shellcheck disable=SC2123  # the search path is exactly what is meant
+    PATH="$TEST_TMP/no-commands"
+    main
+  ) 2>&1
+)"
+rc=$?
+assert "main() stops where there is no apt-get" [ "$rc" -ne 0 ]
+assert "naming apt-get as what it needs" contains "$out" "apt-get"
+refute "and it never starts the Mac's setup" contains "$out" "FELL THROUGH"
 
 finish

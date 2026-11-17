@@ -80,7 +80,7 @@ assert "and names the missing command rather than failing obscurely" \
   contains "$out" "definitely-not-a-real-command"
 
 echo
-echo "== is_macos gates the whole script =="
+echo "== is_macos decides which setup runs, the Mac's or the server's =="
 reset_stubs
 out="$(
   PATH="$STUB:$PATH" HOME="$FAKE_HOME" OSTYPE=linux-gnu bash -c "

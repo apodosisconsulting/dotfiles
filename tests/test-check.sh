@@ -297,18 +297,23 @@ mutate_machine "no rows read out of WezTerm's key table fails rather than passin
 
 # The defect this exists for: Enter and a mouse drag copying into tmux's own
 # buffer, which is a second clipboard.
+#
+# copy-command and the prefix ] binding sit inside tmux.conf's `if-shell
+# 'command -v pbcopy'` block, indented, so the four patterns that name them
+# allow leading spaces. Anchored at column 0 they matched nothing, and a
+# mutation that changes nothing is reported as a defect the check missed.
 mutate "no copy-command, so a tmux copy stays in tmux, is caught" "tmux copies to and pastes from" \
-  sed -i '' '/^set -s copy-command/d' tmux/.config/tmux/tmux.conf
+  sed -i '' '/^ *set -s copy-command/d' tmux/.config/tmux/tmux.conf
 
 mutate "a copy-command other than pbcopy is caught" "tmux copies to and pastes from" \
-  sed -i '' "s/^set -s copy-command 'pbcopy'$/set -s copy-command 'cat'/" tmux/.config/tmux/tmux.conf
+  sed -i '' "s/^\( *\)set -s copy-command 'pbcopy'$/\1set -s copy-command 'cat'/" tmux/.config/tmux/tmux.conf
 
 # A command after copy-pipe-and-cancel overrides copy-command for that key.
 mutate "a y binding with its own pipe command is caught" "tmux copies to and pastes from" \
   sed -i '' 's/^bind -T copy-mode-vi y send-keys -X copy-pipe-and-cancel$/bind -T copy-mode-vi y send-keys -X copy-pipe-and-cancel "cat >\/dev\/null"/' tmux/.config/tmux/tmux.conf
 
 mutate "prefix ] left on tmux's own buffer is caught" "tmux copies to and pastes from" \
-  sed -i '' '/^bind \] /d' tmux/.config/tmux/tmux.conf
+  sed -i '' '/^ *bind \] /d' tmux/.config/tmux/tmux.conf
 
 # Last write wins in tmux.conf too: a later override is the one tmux applies.
 mutate "a later copy-command overriding pbcopy is caught" "tmux copies to and pastes from" \
@@ -318,7 +323,7 @@ mutate "a later y rebinding with its own command is caught" "tmux copies to and 
   bash -c "printf '\nbind -T copy-mode-vi y send-keys -X copy-pipe-and-cancel \"cat\"\n' >> tmux/.config/tmux/tmux.conf"
 
 mutate "a prefix ] that never reads pbpaste is caught" "tmux copies to and pastes from" \
-  sed -i '' 's/^bind \] run-shell "pbpaste | /bind ] run-shell "cat \/dev\/null | /' tmux/.config/tmux/tmux.conf
+  sed -i '' 's/^\( *\)bind \] run-shell "pbpaste | /\1bind ] run-shell "cat \/dev\/null | /' tmux/.config/tmux/tmux.conf
 
 # The defect this exists for: status-right set after tpm runs, overwriting
 # continuum's #(), so auto-save stops without a word.
@@ -334,9 +339,10 @@ mutate "no status-right to read fails rather than passing vacuously" "status-rig
   sed -i '' '/^set -g status-right /d' tmux/.config/tmux/tmux.conf
 
 # The defect this exists for: tpm back in the foreground, so every new server
-# and every prefix S waits for all the plugins to load.
+# and every prefix S waits for all the plugins to load. The line's command
+# tests for tpm before running it, so the pattern keeps whatever follows -b.
 mutate "tpm run without -b is caught" "tpm loads in the background" \
-  sed -i '' "s|^run -b '~/.config/tmux/plugins/tpm/tpm'$|run '~/.config/tmux/plugins/tpm/tpm'|" tmux/.config/tmux/tmux.conf
+  sed -i '' "s|^run -b \(.*plugins/tpm/tpm'\)$|run \1|" tmux/.config/tmux/tmux.conf
 
 # tmux applies every run line, so one in the foreground is a wait however many
 # backgrounded ones there are.
@@ -779,6 +785,18 @@ mutate "a shell script with no shebang is caught, because lint would skip it" "d
 mutate "CI no longer running the linters is caught" "CI runs 'make lint'" \
   sed -i '' 's/^        run: make lint$/        run: true/' .github/workflows/ci.yml
 
+# bootstrap.sh's Linux branch never runs on a Mac, so the server job is the
+# only thing that executes it. Three ways for that to stop without a word: the
+# step goes, the step stays as a comment, or the script it runs is gone.
+mutate "CI no longer running the Linux server test is caught" "CI runs tests/linux-server.sh" \
+  sed -i '' 's|^        run: bash tests/linux-server.sh .*$|        run: true|' .github/workflows/ci.yml
+
+mutate "the Linux server test left only in a comment is caught" "CI runs tests/linux-server.sh" \
+  sed -i '' 's|^        run: bash tests/linux-server.sh |        # run: bash tests/linux-server.sh |' .github/workflows/ci.yml
+
+mutate "a Linux server test that is no longer in the repo is caught" "CI runs tests/linux-server.sh" \
+  git rm -q tests/linux-server.sh
+
 # The defect this exists for: CI priming with sync, which updates every plugin
 # past the lock before the suites run.
 mutate "CI priming the plugins with sync is caught" "at the commits lazy-lock.json pins" \
@@ -1148,6 +1166,12 @@ echo "== a git -c for one command is not the repo's git config going dead =="
 # it and refused the commit. Driven through a real commit in the copy, so the
 # hook gets the override the way git delivers it rather than the way this file
 # assumes it does. Only meaningful where the machine half passes.
+#
+# The override here is pull.rebase, not the core.editor of that amend. The
+# comparison only looks at keys the repo's config sets, and it stopped setting
+# core.editor (git follows $EDITOR now), so an override of that key would be
+# refuted by a comparison that never looked at it. Any key the repo does set
+# takes the same path from -c to the hook.
 reset_repo
 full="$(run_check_full)"
 if ! contains "$full" "0 failure(s)" || ! contains "$full" "keys the repo's git config sets"; then
@@ -1155,12 +1179,12 @@ if ! contains "$full" "0 failure(s)" || ! contains "$full" "keys the repo's git 
 else
   rc=0
   out="$(cd "$WORK" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=commit.verbose GIT_CONFIG_VALUE_0=false \
-    git -c core.editor=a-one-off-editor commit -q --allow-empty -m probe 2>&1)" || rc=$?
+    git -c pull.rebase=false commit -q --allow-empty -m probe 2>&1)" || rc=$?
   # The refusals below pass on silence, so first: the hook ran the comparison.
   assert "the hook still compares every key the repo's git config sets" \
     contains "$out" "keys the repo's git config sets are what git actually uses"
   refute "a git -c override is not reported as the repo's value going dead" \
-    contains "$out" "core.editor: repo says"
+    contains "$out" "pull.rebase: repo says"
   refute "nor is one passed in GIT_CONFIG_COUNT" contains "$out" "commit.verbose: repo says"
   assert "and the commit goes through" [ "$rc" -eq 0 ]
 fi
