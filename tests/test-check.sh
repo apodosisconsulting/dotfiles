@@ -1148,6 +1148,12 @@ echo "== a git -c for one command is not the repo's git config going dead =="
 # it and refused the commit. Driven through a real commit in the copy, so the
 # hook gets the override the way git delivers it rather than the way this file
 # assumes it does. Only meaningful where the machine half passes.
+#
+# The override here is pull.rebase, not the core.editor of that amend. The
+# comparison only looks at keys the repo's config sets, and it stopped setting
+# core.editor (git follows $EDITOR now), so an override of that key would be
+# refuted by a comparison that never looked at it. Any key the repo does set
+# takes the same path from -c to the hook.
 reset_repo
 full="$(run_check_full)"
 if ! contains "$full" "0 failure(s)" || ! contains "$full" "keys the repo's git config sets"; then
@@ -1155,12 +1161,12 @@ if ! contains "$full" "0 failure(s)" || ! contains "$full" "keys the repo's git 
 else
   rc=0
   out="$(cd "$WORK" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=commit.verbose GIT_CONFIG_VALUE_0=false \
-    git -c core.editor=a-one-off-editor commit -q --allow-empty -m probe 2>&1)" || rc=$?
+    git -c pull.rebase=false commit -q --allow-empty -m probe 2>&1)" || rc=$?
   # The refusals below pass on silence, so first: the hook ran the comparison.
   assert "the hook still compares every key the repo's git config sets" \
     contains "$out" "keys the repo's git config sets are what git actually uses"
   refute "a git -c override is not reported as the repo's value going dead" \
-    contains "$out" "core.editor: repo says"
+    contains "$out" "pull.rebase: repo says"
   refute "nor is one passed in GIT_CONFIG_COUNT" contains "$out" "commit.verbose: repo says"
   assert "and the commit goes through" [ "$rc" -eq 0 ]
 fi

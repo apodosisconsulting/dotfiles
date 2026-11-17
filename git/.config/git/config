@@ -1,6 +1,9 @@
 [core]
 	excludesfile = ~/.config/git/ignore
-	editor = nvim
+	# No editor named here, so git uses $VISUAL, then $EDITOR. .zshrc sets both:
+	# nvim where it is installed, vi on a server that has none. A name written
+	# here wins over those, and `editor = nvim` left git unable to open a commit
+	# message on any machine without Neovim.
 [user]
 	name = Richard Armstrong
 	email = richard@apodosis.co.uk

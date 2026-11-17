@@ -96,12 +96,13 @@ nvm() {
 # Line editing: emacs keys, whatever $EDITOR says
 # -------------------------
 # With no keymap chosen, zle starts in vi mode when $EDITOR or $VISUAL mentions
-# vi. This file exports EDITOR=nvim, so a fresh terminal got emacs keys while
-# any shell started from one (exec zsh, a nested zsh, nvim's :terminal, a tmux
-# server started from a shell) got vi insert mode, where Ctrl-A, Ctrl-E and
-# Ctrl-Y type themselves. Chosen before compinit, which binds its ^X keys into
-# whichever keymap is current. /etc/zshrc has already bound Delete, Home, End,
-# Up and Down into that keymap, so those five are bound again in emacs.
+# vi. This file exports EDITOR as nvim or vi, so a fresh terminal got emacs
+# keys while any shell started from one (exec zsh, a nested zsh, nvim's
+# :terminal, a tmux server started from a shell) got vi insert mode, where
+# Ctrl-A, Ctrl-E and Ctrl-Y type themselves. Chosen before compinit, which
+# binds its ^X keys into whichever keymap is current. /etc/zshrc has already
+# bound Delete, Home, End, Up and Down into that keymap, so those five are
+# bound again in emacs.
 bindkey -e
 () {
   local k w
@@ -151,11 +152,19 @@ zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
 # Environment
 # -------------------------
 
-# Editor
-export EDITOR="nvim"
-export VISUAL="nvim"
+# Editor: nvim where it is installed. A server set up by bootstrap.sh's Linux
+# branch has none, and there git, crontab -e and everything else that reads
+# these would be told to run a program that does not exist; Debian's and
+# Ubuntu's cloud images both come with a vi. git's own config names no editor,
+# so that it follows these too.
+if (( $+commands[nvim] )); then
+  export EDITOR="nvim" VISUAL="nvim"
+else
+  export EDITOR="vi" VISUAL="vi"
+fi
 
-# Locale
+# Locale. bootstrap.sh's Linux branch reads LANG off the line below and
+# generates that locale on a server that does not have it yet.
 export LANG="en_GB.UTF-8"
 export LC_ALL="en_GB.UTF-8"
 
@@ -186,7 +195,11 @@ setopt inc_append_history
 # Aliases
 # -------------------------
 alias ll='ls -lah'
-alias vim='nvim'
+# Only where there is an nvim: on a server without one this would turn a vim
+# that works into a command that is not found.
+if (( $+commands[nvim] )); then
+  alias vim='nvim'
+fi
 
 # -------------------------
 # Shell options
@@ -203,21 +216,43 @@ setopt interactive_comments
 # -------------------------
 # fzf shell integration (Ctrl-R history, Ctrl-T files, Alt-C cd)
 # -------------------------
-if command -v fzf >/dev/null 2>&1; then
-  eval "$(fzf --zsh)"
+# `fzf --zsh` prints the integration, in fzf 0.48 and later. An older fzf,
+# which is what Debian 12 and Ubuntu 24.04 package, rejects the flag: it wrote
+# "unknown option: --zsh" into every new shell and bound nothing. apt installs
+# the same two scripts as files instead, so those are sourced there. Where the
+# flag works this is one fzf process per shell, as it was.
+if (( $+commands[fzf] )); then
+  if fzf_zsh="$(fzf --zsh 2>/dev/null)"; then
+    eval "$fzf_zsh"
+  else
+    for fzf_zsh in /usr/share/doc/fzf/examples/{key-bindings,completion}.zsh; do
+      if [[ -r $fzf_zsh ]]; then
+        source $fzf_zsh
+      fi
+    done
+  fi
+  unset fzf_zsh
 fi
 
 # -------------------------
-# Zsh plugins (installed via Homebrew)
+# Zsh plugins
 # -------------------------
-if [[ -d "${HOMEBREW_PREFIX:-}/share/zsh-autosuggestions" ]]; then
-  source "$HOMEBREW_PREFIX/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
-fi
-
-# Syntax highlighting must be sourced last (after all widgets are defined)
-if [[ -d "${HOMEBREW_PREFIX:-}/share/zsh-syntax-highlighting" ]]; then
-  source "$HOMEBREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
-fi
+# Under Homebrew's share on a Mac, and under /usr/share where apt puts the same
+# two packages; the first that has the file is sourced. They were looked for
+# under Homebrew alone, so on Linux neither loaded and nothing said so. At the
+# top level, not in a function, so what the plugins declare stays global.
+#
+# Syntax highlighting must be sourced last (after all widgets are defined),
+# which is why it is second.
+for zsh_plugin in zsh-autosuggestions zsh-syntax-highlighting; do
+  for zsh_plugin_dir in ${HOMEBREW_PREFIX:+$HOMEBREW_PREFIX/share} /usr/share; do
+    if [[ -r $zsh_plugin_dir/$zsh_plugin/$zsh_plugin.zsh ]]; then
+      source $zsh_plugin_dir/$zsh_plugin/$zsh_plugin.zsh
+      break
+    fi
+  done
+done
+unset zsh_plugin zsh_plugin_dir
 
 # -------------------------
 # Prompt (Starship) — must be last
@@ -230,7 +265,10 @@ if command -v starship >/dev/null 2>&1; then
   # gains a right_format: checks/repo.sh fails until the two agree.
   RPROMPT=''
 else
-  PROMPT='%1~ %# '
+  # No starship, which is every server bootstrap.sh's Linux branch sets up. A
+  # prompt there has to say which machine it is: user@host first, over ssh
+  # only, which is when starship's own hostname module would show it.
+  PROMPT="${SSH_CONNECTION:+%n@%m }%1~ %# "
 fi
 
 # Optional per-machine overrides (not committed).
